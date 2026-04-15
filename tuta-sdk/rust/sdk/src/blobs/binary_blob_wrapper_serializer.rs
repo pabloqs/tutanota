@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use base64::Engine;
-use crate::util::BASE64_EXT;
-use crate::GeneratedId;
 #[cfg(test)]
 use crate::id::generated_id::GENERATED_ID_BYTES_LENGTH;
+use crate::util::BASE64_EXT;
+use crate::GeneratedId;
+use base64::Engine;
 use crypto_primitives::key::GenericAesKey;
 use thiserror::Error;
 
@@ -73,9 +73,11 @@ pub fn parse_multiple_blobs_response(
 		let data_length = u32::from_be_bytes(
 			concat[offset..offset + BLOB_LENGTH_BYTES]
 				.try_into()
-				.map_err(|_| BinaryBlobWrapperSerializationError::InvalidBlobPayload {
-					reason: "length field".into(),
-				})?,
+				.map_err(
+					|_| BinaryBlobWrapperSerializationError::InvalidBlobPayload {
+						reason: "length field".into(),
+					},
+				)?,
 		) as usize;
 		offset += BLOB_LENGTH_BYTES;
 		let data_end = offset.checked_add(data_length).ok_or_else(|| {
@@ -102,7 +104,11 @@ pub fn parse_multiple_blobs_response(
 	}
 	if result.len() != expected {
 		return Err(BinaryBlobWrapperSerializationError::InvalidBlobPayload {
-			reason: format!("parsed {} blobs, header declared {}", result.len(), expected),
+			reason: format!(
+				"parsed {} blobs, header declared {}",
+				result.len(),
+				expected
+			),
 		});
 	}
 	Ok(result)
@@ -315,8 +321,9 @@ pub fn serialize_new_blobs_in_binary_chunks(
 mod tests {
 	use crate::blobs::binary_blob_wrapper_serializer::{
 		deserialize_blobs, deserialize_new_blobs, parse_multiple_blobs_response, serialize_blobs,
-		serialize_new_blobs, serialize_new_blobs_in_binary_chunks, BinaryBlobWrapperSerializationError,
-		BlobWrapper, KeyedNewBlobWrapper, NewBlobWrapper, MAX_NUMBER_OF_BLOBS_IN_BINARY,
+		serialize_new_blobs, serialize_new_blobs_in_binary_chunks,
+		BinaryBlobWrapperSerializationError, BlobWrapper, KeyedNewBlobWrapper, NewBlobWrapper,
+		MAX_NUMBER_OF_BLOBS_IN_BINARY,
 	};
 	use crate::tutanota_constants::MAX_BLOB_SERVICE_BYTES;
 	use crate::util::BASE64_EXT;

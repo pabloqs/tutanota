@@ -11,19 +11,19 @@ use crate::blobs::blob_access_token_cache::BlobWriteTokenKey;
 #[cfg_attr(test, mockall_double::double)]
 use crate::blobs::blob_access_token_facade::BlobAccessTokenFacade;
 use crate::crypto_entity_client::CryptoEntityClient;
+use crate::element_value::ParsedEntity;
 use crate::entities::generated::storage::{BlobGetIn, BlobId, BlobPostOut, BlobServerAccessInfo};
 use crate::entities::generated::sys::{Blob, BlobReferenceTokenWrapper};
 use crate::entities::generated::tutanota::TutanotaFile;
 use crate::entities::Entity;
-use crate::element_value::ParsedEntity;
 use crate::instance_mapper::InstanceMapper;
 use crate::json_element::RawEntity;
 use crate::json_serializer::JsonSerializer;
+use crate::metamodel::ElementType;
 use crate::rest_error::HttpError;
 use crate::tutanota_constants::{
 	ArchiveDataType, MAX_BLOB_SERVICE_BYTES, MAX_UNENCRYPTED_BLOB_SIZE_BYTES,
 };
-use crate::metamodel::ElementType;
 use crate::type_model_provider::TypeModelProvider;
 use crate::TypeRef;
 use crate::{crypto, ApiCallError, CustomId, GeneratedId, HeadersProvider};
@@ -533,21 +533,18 @@ impl BlobFacade {
 		let model_version = client_tm.version;
 		let mut query_pairs: Vec<(String, String)> = vec![
 			("ids".to_string(), ids_joined),
-			("blobAccessToken".to_string(), access.blobAccessToken.clone()),
+			(
+				"blobAccessToken".to_string(),
+				access.blobAccessToken.clone(),
+			),
 			("v".to_string(), model_version.to_string()),
 		];
-		query_pairs.extend(
-			self.auth_headers_provider
-				.provide_headers(model_version),
-		);
+		query_pairs.extend(self.auth_headers_provider.provide_headers(model_version));
 		let encoded = rest_client::encode_query_params(query_pairs);
 
 		let type_name_lower = client_tm.name.to_lowercase();
 		let app_str = client_tm.app.to_string();
-		let path_suffix = format!(
-			"/rest/{}/{}/{}",
-			app_str, type_name_lower, archive_list_id
-		);
+		let path_suffix = format!("/rest/{}/{}/{}", app_str, type_name_lower, archive_list_id);
 
 		for server in &access.servers {
 			let base = server.url.trim_end_matches('/');
@@ -671,11 +668,10 @@ impl BlobFacade {
 				.await;
 			match maybe_response {
 				Ok(RestResponse {
-					status: 200,
-					body,
-					..
+					status: 200, body, ..
 				}) => {
-					let bytes = body.ok_or_else(|| ApiCallError::internal("empty blob GET body".into()))?;
+					let bytes =
+						body.ok_or_else(|| ApiCallError::internal("empty blob GET body".into()))?;
 					return parse_multiple_blobs_response(bytes.as_slice())
 						.map_err(|e| ApiCallError::internal(e.to_string()));
 				},

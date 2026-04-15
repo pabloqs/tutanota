@@ -371,25 +371,24 @@ impl CryptoFacade {
 		let bucket_key_attribute_id = mail_type_model
 			.get_attribute_id_by_attribute_name(BUCKET_KEY_FIELD)
 			.map_err(|err| SessionKeyResolutionError {
-				reason: format!(
-					"{BUCKET_KEY_FIELD} attribute on Mail: {err}",
-				),
+				reason: format!("{BUCKET_KEY_FIELD} attribute on Mail: {err}",),
 			})?;
 
-		let bucket_key_map =
-			if let Some(ElementValue::Array(bucket_keys)) = mail_parsed.get(&bucket_key_attribute_id) {
-				if let Some(ElementValue::Dict(bucket_key_map)) = bucket_keys.first() {
-					bucket_key_map
-				} else {
-					return Err(SessionKeyResolutionError {
-						reason: format!("{BUCKET_KEY_FIELD} is empty"),
-					});
-				}
+		let bucket_key_map = if let Some(ElementValue::Array(bucket_keys)) =
+			mail_parsed.get(&bucket_key_attribute_id)
+		{
+			if let Some(ElementValue::Dict(bucket_key_map)) = bucket_keys.first() {
+				bucket_key_map
 			} else {
 				return Err(SessionKeyResolutionError {
-					reason: format!("Mail has no {BUCKET_KEY_FIELD}"),
+					reason: format!("{BUCKET_KEY_FIELD} is empty"),
 				});
-			};
+			}
+		} else {
+			return Err(SessionKeyResolutionError {
+				reason: format!("Mail has no {BUCKET_KEY_FIELD}"),
+			});
+		};
 
 		let bucket_key: BucketKey =
 			match self.instance_mapper.parse_entity(bucket_key_map.to_owned()) {
@@ -442,7 +441,10 @@ impl CryptoFacade {
 			.find(|isk| {
 				&isk.instanceList == attachment_list_id && &isk.instanceId == attachment_element_id
 			})
-			.or_else(|| keys.iter().find(|isk| &isk.instanceId == attachment_element_id));
+			.or_else(|| {
+				keys.iter()
+					.find(|isk| &isk.instanceId == attachment_element_id)
+			});
 
 		let Some(isk) = matched else {
 			return Err(SessionKeyResolutionError {
@@ -450,8 +452,7 @@ impl CryptoFacade {
 			});
 		};
 
-		let session_key =
-			decrypted_bucket_key.decrypt_aes_key(isk.symEncSessionKey.as_slice())?;
+		let session_key = decrypted_bucket_key.decrypt_aes_key(isk.symEncSessionKey.as_slice())?;
 
 		let versioned_owner_group_key = self
 			.key_loader_facade

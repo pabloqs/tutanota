@@ -47,7 +47,8 @@ fn merge_mail_owner_fields_into_entity_parsed(
 		tm.get_attribute_id_by_attribute_name(name)
 			.map_err(|e| ApiCallError::internal(e.to_string()))
 	}
-	let missing = |m: &ParsedEntity, k: &str| m.get(k).map_or(true, |v| matches!(v, ElementValue::Null));
+	let missing =
+		|m: &ParsedEntity, k: &str| m.get(k).map_or(true, |v| matches!(v, ElementValue::Null));
 
 	let mail_enc = attr_key(mail_tm, OWNER_ENC_SESSION_KEY_FIELD)?;
 	let child_enc = attr_key(child_tm, OWNER_ENC_SESSION_KEY_FIELD)?;
@@ -136,8 +137,12 @@ impl CryptoEntityClient {
 		blob_parsed: ParsedEntity,
 	) -> Result<MailDetailsBlob, ApiCallError> {
 		let mail_parsed = self.typed_instance_to_parsed(mail.clone())?;
-		let mail_tm = self.entity_client.resolve_server_type_ref(&Mail::type_ref())?;
-		let blob_tm = self.entity_client.resolve_server_type_ref(&MailDetailsBlob::type_ref())?;
+		let mail_tm = self
+			.entity_client
+			.resolve_server_type_ref(&Mail::type_ref())?;
+		let blob_tm = self
+			.entity_client
+			.resolve_server_type_ref(&MailDetailsBlob::type_ref())?;
 		let merged = merge_mail_owner_fields_into_entity_parsed(
 			mail_tm.as_ref(),
 			blob_tm.as_ref(),
@@ -160,7 +165,9 @@ impl CryptoEntityClient {
 		file: &TutanotaFile,
 	) -> Result<ResolvedSessionKey, ApiCallError> {
 		let file_parsed = self.typed_instance_to_parsed(file.clone())?;
-		let file_tm = self.entity_client.resolve_client_type_ref(&TutanotaFile::type_ref())?;
+		let file_tm = self
+			.entity_client
+			.resolve_client_type_ref(&TutanotaFile::type_ref())?;
 
 		let file_resolve_note = match self
 			.crypto_facade
@@ -173,14 +180,15 @@ impl CryptoEntityClient {
 		};
 
 		let mail_parsed = self.typed_instance_to_parsed(mail.clone())?;
-		let mail_tm = self.entity_client.resolve_client_type_ref(&Mail::type_ref())?;
+		let mail_tm = self
+			.entity_client
+			.resolve_client_type_ref(&Mail::type_ref())?;
 
 		let fid = file
 			._id
 			.as_ref()
 			.ok_or_else(|| ApiCallError::internal("TutanotaFile has no _id".into()))?;
-		self
-			.crypto_facade
+		self.crypto_facade
 			.resolve_session_key_for_attachment_from_mail_bucket(
 				&mail_parsed,
 				mail_tm,

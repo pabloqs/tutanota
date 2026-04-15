@@ -20,17 +20,20 @@ use crate::crypto::crypto_facade::create_auth_verifier;
 use crate::crypto::crypto_facade::CryptoFacade;
 use crate::crypto::key::VersionedAesKey;
 #[cfg_attr(test, mockall_double::double)]
-use crate::crypto::public_key_provider::{PublicKeyIdentifier, PublicKeyLoadingError, PublicKeyProvider};
+use crate::crypto::public_key_provider::{
+	PublicKeyIdentifier, PublicKeyLoadingError, PublicKeyProvider,
+};
 #[cfg_attr(test, mockall_double::double)]
 use crate::crypto_entity_client::CryptoEntityClient;
 use crate::date::date_provider::SystemDateProvider;
 use crate::element_value::{ElementValue, ParsedEntity};
 use crate::entities::entity_facade::{EntityFacade, EntityFacadeImpl};
 use crate::entities::generated::sys::{CreateSessionData, SaltData, User};
+use crate::entities::generated::sys::{ExternalUserReference, Group, GroupRoot, RootInstance};
 use crate::entities::generated::tutanota::{
 	CreateExternalUserGroupData, DraftCreateData, DraftCreateReturn, DraftData, DraftRecipient,
 	EncryptedMailAddress, ExternalUserData, InternalRecipientKeyData, Mail, MailDetails,
-	MailDetailsBlob, SendDraftData, SendDraftParameters, SecureExternalRecipientKeyData,
+	MailDetailsBlob, SecureExternalRecipientKeyData, SendDraftData, SendDraftParameters,
 	SendDraftReturn, TutanotaFile, TutanotaProperties,
 };
 #[cfg_attr(test, mockall_double::double)]
@@ -51,15 +54,14 @@ use crate::services::generated::tutanota::{DraftService, ExternalUserService, Se
 use crate::services::service_executor::{ResolvingServiceExecutor, ServiceExecutor};
 use crate::services::ExtraServiceParams;
 use crate::tutanota_constants::PublicKeyIdentifierType;
-use crate::util::convert_version_to_i64;
 use crate::type_model_provider::TypeModelProvider;
 #[cfg_attr(test, mockall_double::double)]
 use crate::typed_entity_client::TypedEntityClient;
 #[cfg_attr(test, mockall_double::double)]
 use crate::user_facade::UserFacade;
+use crate::util::convert_version_to_i64;
 use bindings::file_client::FileClient;
 use bindings::rest_client::{RestClient, RestClientError};
-use crate::entities::generated::sys::{ExternalUserReference, Group, GroupRoot, RootInstance};
 use crypto_primitives::aes::{Aes256Key, Iv};
 use crypto_primitives::key::GenericAesKey;
 use crypto_primitives::randomizer_facade::RandomizerFacade;
@@ -557,11 +559,17 @@ impl LoggedInSdk {
 				identifier: recipient.address.clone(),
 				identifier_type: PublicKeyIdentifierType::MailAddress,
 			};
-			let current_pub_key = match self.public_key_provider.load_current_pub_key(&identifier).await {
+			let current_pub_key = match self
+				.public_key_provider
+				.load_current_pub_key(&identifier)
+				.await
+			{
 				Ok(k) => k,
-				Err(PublicKeyLoadingError::KeyLoadingError(ApiCallError::ServerResponseError {
-					source: HttpError::NotFoundError,
-				})) => {
+				Err(PublicKeyLoadingError::KeyLoadingError(
+					ApiCallError::ServerResponseError {
+						source: HttpError::NotFoundError,
+					},
+				)) => {
 					// External recipient or unknown internal address: skip internal key data.
 					continue;
 				},
@@ -607,7 +615,10 @@ impl LoggedInSdk {
 	/// Loads the account [`GroupRoot`] used for external-user references (same indirection as TS `entityClient.loadRoot(GroupRootTypeRef, userGroupId)`).
 	async fn load_sys_group_root_for_external_users(&self) -> Result<GroupRoot, ApiCallError> {
 		let user_group_id = self.get_user_group_id();
-		let Some(type_root) = self.type_model_provider.resolve_client_type_ref(&GroupRoot::type_ref()) else {
+		let Some(type_root) = self
+			.type_model_provider
+			.resolve_client_type_ref(&GroupRoot::type_ref())
+		else {
 			return Err(ApiCallError::external_secure_send_unavailable(
 				"Could not read account configuration for password-protected external mail (missing type model).",
 			));
@@ -621,10 +632,10 @@ impl LoggedInSdk {
 			.load(&root_instance_id)
 			.await
 			.map_err(|e| {
-				ApiCallError::external_secure_send_unavailable(format!(
+			ApiCallError::external_secure_send_unavailable(format!(
 					"Could not resolve password-protected external mail settings (GroupRoot root pointer). {e}"
 				))
-			})?;
+		})?;
 		self.crypto_entity_client
 			.load::<GroupRoot, GeneratedId>(&root_instance.reference)
 			.await
@@ -652,7 +663,9 @@ impl LoggedInSdk {
 		let mail_group_id = self
 			.user_facade
 			.get_membership_by_group_type(GroupType::Mail)
-			.map_err(|e| ApiCallError::internal(format!("send_mail_standard: mail membership: {e}")))?
+			.map_err(|e| {
+				ApiCallError::internal(format!("send_mail_standard: mail membership: {e}"))
+			})?
 			.group;
 		let internal_mail_group_key = self.get_current_sym_group_key(&mail_group_id).await?;
 
@@ -661,28 +674,39 @@ impl LoggedInSdk {
 		let current_external_user_group_key = VersionedAesKey::new(ext_user_key.clone(), 0);
 		let current_external_mail_group_key = VersionedAesKey::new(ext_mail_key.clone(), 0);
 
-		let external_user_group_info_session_key = GenericAesKey::from(Aes256Key::generate(&randomizer));
-		let external_mail_group_info_session_key = GenericAesKey::from(Aes256Key::generate(&randomizer));
+		let external_user_group_info_session_key =
+			GenericAesKey::from(Aes256Key::generate(&randomizer));
+		let external_mail_group_info_session_key =
+			GenericAesKey::from(Aes256Key::generate(&randomizer));
 		let tutanota_properties_session_key = GenericAesKey::from(Aes256Key::generate(&randomizer));
 		let mailbox_session_key = GenericAesKey::from(Aes256Key::generate(&randomizer));
 
 		let entropy = randomizer.generate_random_array::<32>();
 		let external_user_enc_entropy = ext_user_key
 			.encrypt_data(entropy.as_slice(), Iv::generate(&randomizer))
-			.map_err(|e| ApiCallError::internal(format!("send_mail_standard: encrypt external entropy failed: {e}")))?;
+			.map_err(|e| {
+				ApiCallError::internal(format!(
+					"send_mail_standard: encrypt external entropy failed: {e}"
+				))
+			})?;
 
-		let internal_enc = internal_user_group_key.encrypt_key(&ext_user_key, Iv::generate(&randomizer));
+		let internal_enc =
+			internal_user_group_key.encrypt_key(&ext_user_key, Iv::generate(&randomizer));
 		let user_group_data = CreateExternalUserGroupData {
 			// Aggregated type: server / TS client expect a client-generated CustomId (cardinality One).
 			_id: Some(Self::random_aggregate_custom_id()),
 			mailAddress: cleaned_mail_address.to_string(),
-			externalPwEncUserGroupKey: external_user_pw_key.encrypt_key(&ext_user_key, Iv::generate(&randomizer)),
+			externalPwEncUserGroupKey: external_user_pw_key
+				.encrypt_key(&ext_user_key, Iv::generate(&randomizer)),
 			internalUserEncUserGroupKey: internal_enc.object,
 			internalUserGroupKeyVersion: convert_version_to_i64(internal_enc.version),
 		};
 
 		let external_user_enc_user_group_info_session_key = current_external_user_group_key
-			.encrypt_key(&external_user_group_info_session_key, Iv::generate(&randomizer))
+			.encrypt_key(
+				&external_user_group_info_session_key,
+				Iv::generate(&randomizer),
+			)
 			.object;
 		let external_user_enc_mail_group_key = current_external_user_group_key
 			.encrypt_key(&ext_mail_key, Iv::generate(&randomizer))
@@ -692,17 +716,26 @@ impl LoggedInSdk {
 			.object;
 
 		let external_mail_enc_mail_group_info_session_key = current_external_mail_group_key
-			.encrypt_key(&external_mail_group_info_session_key, Iv::generate(&randomizer))
+			.encrypt_key(
+				&external_mail_group_info_session_key,
+				Iv::generate(&randomizer),
+			)
 			.object;
 		let external_mail_enc_mail_box_session_key = current_external_mail_group_key
 			.encrypt_key(&mailbox_session_key, Iv::generate(&randomizer))
 			.object;
 
 		let internal_mail_enc_user_group_info_session_key = internal_mail_group_key
-			.encrypt_key(&external_user_group_info_session_key, Iv::generate(&randomizer))
+			.encrypt_key(
+				&external_user_group_info_session_key,
+				Iv::generate(&randomizer),
+			)
 			.object;
 		let internal_mail_enc_mail_group_info_session_key = internal_mail_group_key
-			.encrypt_key(&external_mail_group_info_session_key, Iv::generate(&randomizer))
+			.encrypt_key(
+				&external_mail_group_info_session_key,
+				Iv::generate(&randomizer),
+			)
 			.object;
 
 		let external_user_data = ExternalUserData {
@@ -714,7 +747,8 @@ impl LoggedInSdk {
 			internalMailEncUserGroupInfoSessionKey: internal_mail_enc_user_group_info_session_key,
 			externalMailEncMailGroupInfoSessionKey: external_mail_enc_mail_group_info_session_key,
 			internalMailEncMailGroupInfoSessionKey: internal_mail_enc_mail_group_info_session_key,
-			externalUserEncTutanotaPropertiesSessionKey: external_user_enc_tutanota_properties_session_key,
+			externalUserEncTutanotaPropertiesSessionKey:
+				external_user_enc_tutanota_properties_session_key,
 			externalMailEncMailBoxSessionKey: external_mail_enc_mail_box_session_key,
 			kdfVersion: kdf_version,
 			internalMailGroupKeyVersion: convert_version_to_i64(internal_mail_group_key.version),
@@ -739,7 +773,11 @@ impl LoggedInSdk {
 	) -> Result<Vec<SecureExternalRecipientKeyData>, ApiCallError> {
 		let user_group_id = self.get_user_group_id();
 		let group_root = self.load_sys_group_root_for_external_users().await?;
-		let key_loader = self.crypto_entity_client.get_crypto_facade().get_key_loader_facade().clone();
+		let key_loader = self
+			.crypto_entity_client
+			.get_crypto_facade()
+			.get_key_loader_facade()
+			.clone();
 		let randomizer = RandomizerFacade::from_core(rand_core::OsRng);
 		let mut out = Vec::new();
 
@@ -748,14 +786,20 @@ impl LoggedInSdk {
 				identifier: recipient.address.clone(),
 				identifier_type: PublicKeyIdentifierType::MailAddress,
 			};
-			match self.public_key_provider.load_current_pub_key(&identifier).await {
+			match self
+				.public_key_provider
+				.load_current_pub_key(&identifier)
+				.await
+			{
 				Ok(_) => {
 					// Tuta (internal) recipient: bucket key is carried via `internalRecipientKeyData`, not secure-external.
 					continue;
 				},
-				Err(PublicKeyLoadingError::KeyLoadingError(ApiCallError::ServerResponseError {
-					source: HttpError::NotFoundError,
-				})) => {},
+				Err(PublicKeyLoadingError::KeyLoadingError(
+					ApiCallError::ServerResponseError {
+						source: HttpError::NotFoundError,
+					},
+				)) => {},
 				Err(e) => {
 					return Err(ApiCallError::internal(format!(
 						"send_mail_standard: load_current_pub_key({}) for secure-external branch failed: {e}",
@@ -775,51 +819,72 @@ impl LoggedInSdk {
 			let password_verifier = crate::crypto::sha256(password_key.as_bytes()).to_vec();
 			let password_key_generic = GenericAesKey::Aes256(password_key.clone());
 
-			let external_ref: ExternalUserReference = match self.crypto_entity_client.load(&external_ref_id).await {
-				Ok(r) => r,
-				Err(ApiCallError::ServerResponseError {
-					source: HttpError::NotFoundError,
-				}) => {
-					self
-						.post_create_external_user_for_address(
+			let external_ref: ExternalUserReference =
+				match self.crypto_entity_client.load(&external_ref_id).await {
+					Ok(r) => r,
+					Err(ApiCallError::ServerResponseError {
+						source: HttpError::NotFoundError,
+					}) => {
+						self.post_create_external_user_for_address(
 							&cleaned,
 							&password_key_generic,
 							&password_verifier,
 							1,
 						)
 						.await?;
-					self.crypto_entity_client.load(&external_ref_id).await.map_err(|e| {
-						ApiCallError::internal(format!(
+						self.crypto_entity_client
+							.load(&external_ref_id)
+							.await
+							.map_err(|e| {
+								ApiCallError::internal(format!(
 							"send_mail_standard: external user reference missing after provisioning {cleaned}: {e}"
 						))
-					})?
-				},
-				Err(e) => {
-					return Err(ApiCallError::external_secure_send_unavailable(format!(
-						"Could not load external-user record for {cleaned}: {e}"
-					)));
-				},
-			};
+							})?
+					},
+					Err(e) => {
+						return Err(ApiCallError::external_secure_send_unavailable(format!(
+							"Could not load external-user record for {cleaned}: {e}"
+						)));
+					},
+				};
 
-			let external_user: User = self.crypto_entity_client.load(&external_ref.user).await.map_err(|e| {
-				ApiCallError::internal(format!("send_mail_standard: load external user failed: {e}"))
-			})?;
+			let external_user: User = self
+				.crypto_entity_client
+				.load(&external_ref.user)
+				.await
+				.map_err(|e| {
+					ApiCallError::internal(format!(
+						"send_mail_standard: load external user failed: {e}"
+					))
+				})?;
 			let external_mail_group_id = external_user
 				.memberships
 				.iter()
 				.find(|m| m.groupType == Some(GroupType::Mail as i64))
 				.map(|m| m.group.clone())
-				.ok_or_else(|| ApiCallError::internal("send_mail_standard: external user has no mail group".into()))?;
+				.ok_or_else(|| {
+					ApiCallError::internal(
+						"send_mail_standard: external user has no mail group".into(),
+					)
+				})?;
 			let external_mail_group: Group = self
 				.crypto_entity_client
 				.load(&external_mail_group_id)
 				.await
-				.map_err(|e| ApiCallError::internal(format!("send_mail_standard: load external mail group failed: {e}")))?;
+				.map_err(|e| {
+					ApiCallError::internal(format!(
+						"send_mail_standard: load external mail group failed: {e}"
+					))
+				})?;
 			let external_user_group: Group = self
 				.crypto_entity_client
 				.load(&external_ref.userGroup)
 				.await
-				.map_err(|e| ApiCallError::internal(format!("send_mail_standard: load external user group failed: {e}")))?;
+				.map_err(|e| {
+					ApiCallError::internal(format!(
+						"send_mail_standard: load external user group failed: {e}"
+					))
+				})?;
 
 			let required_internal_user_group_key_version =
 				external_user_group.adminGroupKeyVersion.unwrap_or(0).max(0) as u64;
@@ -828,11 +893,21 @@ impl LoggedInSdk {
 			let internal_user_enc_external_user_key = external_user_group
 				.adminGroupEncGKey
 				.clone()
-				.ok_or_else(|| ApiCallError::internal("send_mail_standard: missing adminGroupEncGKey on external user group".into()))?;
+				.ok_or_else(|| {
+					ApiCallError::internal(
+						"send_mail_standard: missing adminGroupEncGKey on external user group"
+							.into(),
+					)
+				})?;
 			let external_user_enc_external_mail_key = external_mail_group
 				.adminGroupEncGKey
 				.clone()
-				.ok_or_else(|| ApiCallError::internal("send_mail_standard: missing adminGroupEncGKey on external mail group".into()))?;
+				.ok_or_else(|| {
+					ApiCallError::internal(
+						"send_mail_standard: missing adminGroupEncGKey on external mail group"
+							.into(),
+					)
+				})?;
 
 			let required_internal_user_group_key = key_loader
 				.load_sym_group_key(
@@ -841,11 +916,20 @@ impl LoggedInSdk {
 					None,
 				)
 				.await
-				.map_err(|e| ApiCallError::internal(format!("send_mail_standard: load internal user group key failed: {e}")))?;
+				.map_err(|e| {
+					ApiCallError::internal(format!(
+						"send_mail_standard: load internal user group key failed: {e}"
+					))
+				})?;
 			let current_external_user_group_key = required_internal_user_group_key
 				.decrypt_aes_key(&internal_user_enc_external_user_key)
-				.map_err(|e| ApiCallError::internal(format!("send_mail_standard: decrypt external user group key failed: {e}")))?;
-			let current_external_user_group_key_version = external_user_group.groupKeyVersion.max(0) as u64;
+				.map_err(|e| {
+					ApiCallError::internal(format!(
+						"send_mail_standard: decrypt external user group key failed: {e}"
+					))
+				})?;
+			let current_external_user_group_key_version =
+				external_user_group.groupKeyVersion.max(0) as u64;
 
 			let required_external_user_group_key = key_loader
 				.load_sym_group_key(
@@ -857,14 +941,23 @@ impl LoggedInSdk {
 					)),
 				)
 				.await
-				.map_err(|e| ApiCallError::internal(format!("send_mail_standard: load external user group key failed: {e}")))?;
+				.map_err(|e| {
+					ApiCallError::internal(format!(
+						"send_mail_standard: load external user group key failed: {e}"
+					))
+				})?;
 			let current_external_mail_group_key = required_external_user_group_key
 				.decrypt_aes_key(&external_user_enc_external_mail_key)
-				.map_err(|e| ApiCallError::internal(format!("send_mail_standard: decrypt external mail group key failed: {e}")))?;
-			let current_external_mail_group_key_version = external_mail_group.groupKeyVersion.max(0) as i64;
+				.map_err(|e| {
+					ApiCallError::internal(format!(
+						"send_mail_standard: decrypt external mail group key failed: {e}"
+					))
+				})?;
+			let current_external_mail_group_key_version =
+				external_mail_group.groupKeyVersion.max(0) as i64;
 
-			let owner_enc_bucket_key = current_external_mail_group_key
-				.encrypt_key(bucket_key, Iv::generate(&randomizer));
+			let owner_enc_bucket_key =
+				current_external_mail_group_key.encrypt_key(bucket_key, Iv::generate(&randomizer));
 			let pw_enc_communication_key = password_key_generic
 				.encrypt_key(&current_external_user_group_key, Iv::generate(&randomizer));
 
@@ -965,7 +1058,9 @@ impl LoggedInSdk {
 				},
 			)
 			.await
-			.map_err(|e| ApiCallError::internal(format!("send_mail_standard: DraftService failed: {e}")))?;
+			.map_err(|e| {
+				ApiCallError::internal(format!("send_mail_standard: DraftService failed: {e}"))
+			})?;
 
 		let lang = if input.language.trim().is_empty() {
 			"en".to_string()
@@ -976,11 +1071,17 @@ impl LoggedInSdk {
 			.crypto_entity_client
 			.load(&created.draft)
 			.await
-			.map_err(|e| ApiCallError::internal(format!("send_mail_standard: load created draft failed: {e}")))?;
+			.map_err(|e| {
+				ApiCallError::internal(format!(
+					"send_mail_standard: load created draft failed: {e}"
+				))
+			})?;
 		let draft_tm = self
 			.type_model_provider
 			.resolve_client_type_ref(&Mail::type_ref())
-			.ok_or_else(|| ApiCallError::internal("send_mail_standard: missing type model for Mail".into()))?;
+			.ok_or_else(|| {
+				ApiCallError::internal("send_mail_standard: missing type model for Mail".into())
+			})?;
 		let draft_parsed = self
 			.crypto_entity_client
 			.typed_instance_to_parsed(created_draft.clone())?;
@@ -989,14 +1090,21 @@ impl LoggedInSdk {
 			.get_crypto_facade()
 			.resolve_session_key(&draft_parsed, draft_tm)
 			.await
-			.map_err(|e| ApiCallError::internal(format!("send_mail_standard: resolve draft session key failed: {e}")))?
-			.ok_or_else(|| ApiCallError::internal("send_mail_standard: no session key for created draft".into()))?;
+			.map_err(|e| {
+				ApiCallError::internal(format!(
+					"send_mail_standard: resolve draft session key failed: {e}"
+				))
+			})?
+			.ok_or_else(|| {
+				ApiCallError::internal(
+					"send_mail_standard: no session key for created draft".into(),
+				)
+			})?;
 		let draft_session_key = draft_resolved.session_key.as_bytes().to_vec();
 
-		let draft_id_for_send = created_draft
-			._id
-			.clone()
-			.ok_or_else(|| ApiCallError::internal("send_mail_standard: created draft missing _id".into()))?;
+		let draft_id_for_send = created_draft._id.clone().ok_or_else(|| {
+			ApiCallError::internal("send_mail_standard: created draft missing _id".into())
+		})?;
 		let draft_id_debug = draft_id_for_send.to_string();
 		let account_plaintext_only = match self
 			.crypto_entity_client
@@ -1012,7 +1120,11 @@ impl LoggedInSdk {
 			None
 		};
 		let bucket_enc_mail_session_key = if let Some(ref bk) = bucket_key {
-			Some(draft_resolved.session_key.encrypt_key(bk, Iv::generate(&randomizer)))
+			Some(
+				draft_resolved
+					.session_key
+					.encrypt_key(bk, Iv::generate(&randomizer)),
+			)
 		} else {
 			None
 		};
@@ -1024,12 +1136,7 @@ impl LoggedInSdk {
 				.chain(input.bcc.iter())
 				.cloned()
 				.collect();
-			self
-				.build_internal_recipient_key_data(
-					bk,
-					&self.get_user_group_id(),
-					&all_recipients,
-				)
+			self.build_internal_recipient_key_data(bk, &self.get_user_group_id(), &all_recipients)
 				.await?
 		} else {
 			Vec::new()
@@ -1037,7 +1144,10 @@ impl LoggedInSdk {
 		let secure_external_recipient_key_data: Vec<SecureExternalRecipientKeyData> =
 			if let (Some(ref bk), Some(pass)) = (
 				bucket_key.as_ref(),
-				input.external_password.as_deref().filter(|s| !s.trim().is_empty()),
+				input
+					.external_password
+					.as_deref()
+					.filter(|s| !s.trim().is_empty()),
 			) {
 				let all_recipients: Vec<SendMailAddressInput> = input
 					.to
@@ -1046,8 +1156,7 @@ impl LoggedInSdk {
 					.chain(input.bcc.iter())
 					.cloned()
 					.collect();
-				self
-					.build_secure_external_recipient_key_data(bk, pass, &all_recipients)
+				self.build_secure_external_recipient_key_data(bk, pass, &all_recipients)
 					.await?
 			} else {
 				Vec::new()
@@ -1103,9 +1212,19 @@ impl LoggedInSdk {
 		};
 		let send_payload_debug = format!(
 			"send.mailSessionKey.bytes={} nested.mailSessionKey.bytes={} send.json={}",
-			send_data.mailSessionKey.as_ref().map(|k| k.len()).unwrap_or(0),
-			send_data.parameters.as_ref().and_then(|p| p.mailSessionKey.as_ref()).map(|k| k.len()).unwrap_or(0),
-			serde_json::to_string(&send_data).unwrap_or_else(|_| "<send_data_json_error>".to_string()),
+			send_data
+				.mailSessionKey
+				.as_ref()
+				.map(|k| k.len())
+				.unwrap_or(0),
+			send_data
+				.parameters
+				.as_ref()
+				.and_then(|p| p.mailSessionKey.as_ref())
+				.map(|k| k.len())
+				.unwrap_or(0),
+			serde_json::to_string(&send_data)
+				.unwrap_or_else(|_| "<send_data_json_error>".to_string()),
 		);
 		self
 			.service_executor
@@ -1225,7 +1344,9 @@ impl LoggedInSdk {
 			.resolve_session_key(&parsed, &type_model)
 			.await
 			.map_err(|e| ApiCallError::internal(e.to_string()))?
-			.ok_or_else(|| ApiCallError::internal("could not resolve session key for file".into()))?;
+			.ok_or_else(|| {
+				ApiCallError::internal("could not resolve session key for file".into())
+			})?;
 		self.blob_facade
 			.download_and_decrypt_file_attachment(
 				ArchiveDataType::Attachments,
@@ -1246,7 +1367,9 @@ impl LoggedInSdk {
 			.resolve_session_key_for_tutanota_file_with_mail(mail, file)
 			.await
 			.map_err(|e| {
-				ApiCallError::internal(format!("download_tutanota_file_attachment_for_mail(resolve key): {e}"))
+				ApiCallError::internal(format!(
+					"download_tutanota_file_attachment_for_mail(resolve key): {e}"
+				))
 			})?;
 		self.blob_facade
 			.download_and_decrypt_file_attachment(
@@ -1256,12 +1379,17 @@ impl LoggedInSdk {
 			)
 			.await
 			.map_err(|e| {
-				ApiCallError::internal(format!("download_tutanota_file_attachment_for_mail(blob decrypt): {e}"))
+				ApiCallError::internal(format!(
+					"download_tutanota_file_attachment_for_mail(blob decrypt): {e}"
+				))
 			})
 	}
 
 	/// Decrypted mail body / headers (`MailDetails`), using the same blob read path as TS [`MailFacade.loadMailDetailsBlob`].
-	pub async fn load_mail_details_for_mail(&self, mail: &Mail) -> Result<MailDetails, ApiCallError> {
+	pub async fn load_mail_details_for_mail(
+		&self,
+		mail: &Mail,
+	) -> Result<MailDetails, ApiCallError> {
 		if mail.mailDetailsDraft.is_some() {
 			return Err(ApiCallError::internal(
 				"load_mail_details_for_mail: draft mail uses mailDetailsDraft (not implemented)"
@@ -1280,9 +1408,9 @@ impl LoggedInSdk {
 				&[details_id.element_id.clone()],
 			)
 			.await?;
-		let blob_parsed = parsed.pop().ok_or_else(|| {
-			ApiCallError::internal("MailDetailsBlob response was empty".into())
-		})?;
+		let blob_parsed = parsed
+			.pop()
+			.ok_or_else(|| ApiCallError::internal("MailDetailsBlob response was empty".into()))?;
 		let blob = self
 			.crypto_entity_client
 			.decrypt_mail_details_blob_using_mail_owner_fallback(mail, blob_parsed)

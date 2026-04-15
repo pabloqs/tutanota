@@ -25,16 +25,16 @@ use serde_json::{json, Value};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use tutasdk::bindings::native_file_client::NativeFileClient;
+use tutasdk::crypto_entity_client::CryptoEntityClient;
 use tutasdk::entities::generated::tutanota::{
 	EncryptedMailAddress, Mail, MailAddress, MailDetails, MailSet, MailSetEntry, TutanotaFile,
 };
+use tutasdk::entities::DateTime;
 use tutasdk::folder_system::{FolderSystem, MailSetKind};
 use tutasdk::net::native_rest_client::NativeRestClient;
-use tutasdk::crypto_entity_client::CryptoEntityClient;
-use tutasdk::entities::DateTime;
 use tutasdk::{
-	ApiCallError, CustomId, GeneratedId, IdTupleGenerated, ListLoadDirection, LoggedInSdk,
-	SendMailAddressInput, SendMailInput, Sdk,
+	ApiCallError, CustomId, GeneratedId, IdTupleGenerated, ListLoadDirection, LoggedInSdk, Sdk,
+	SendMailAddressInput, SendMailInput,
 };
 
 const ERROR_CODE_EXTERNAL_SECURE_SEND_UNAVAILABLE: &str = "external_secure_send_unavailable";
@@ -134,12 +134,12 @@ fn parse_send_request(params: &Value, login_mail: &str) -> Result<SendMailInput,
 		.cloned()
 		.ok_or_else(|| BridgeFailure::from("sendMail: missing request payload"))?;
 	let req: BridgeSendMessageRequest = serde_json::from_value(request_value).map_err(|e| {
-		BridgeFailure::from(format!(
-			"sendMail: invalid request payload shape: {e}"
-		))
+		BridgeFailure::from(format!("sendMail: invalid request payload shape: {e}"))
 	})?;
 	if req.to.is_empty() {
-		return Err(BridgeFailure::from("sendMail: to must include at least one recipient"));
+		return Err(BridgeFailure::from(
+			"sendMail: to must include at least one recipient",
+		));
 	}
 	let body = req
 		.body_html
@@ -219,7 +219,12 @@ async fn resolve_mail_set_entry_start(
 	const MAX_BATCHES: usize = 50;
 	for _ in 0..MAX_BATCHES {
 		let batch: Vec<MailSetEntry> = crypto
-			.load_range::<MailSetEntry, CustomId>(entries_list_id, &start, BATCH, ListLoadDirection::DESC)
+			.load_range::<MailSetEntry, CustomId>(
+				entries_list_id,
+				&start,
+				BATCH,
+				ListLoadDirection::DESC,
+			)
 			.await
 			.map_err(|e| BridgeFailure::from(e.to_string()))?;
 		if batch.is_empty() {
@@ -323,7 +328,8 @@ fn resolve_mail_set<'a>(
 	let fid = folder_id.filter(|s| !s.is_empty());
 	if let Some(s) = fid {
 		if let Some(ms) = fs.mail_sets().iter().find(|ms| {
-			ms.entries.to_string() == *s || ms._id.as_ref().map(ToString::to_string).as_deref() == Some(s)
+			ms.entries.to_string() == *s
+				|| ms._id.as_ref().map(ToString::to_string).as_deref() == Some(s)
 		}) {
 			return Ok(ms);
 		}
@@ -342,7 +348,11 @@ async fn handle_invoke(
 		let ok = headers
 			.get(AUTHORIZATION)
 			.and_then(|v| v.to_str().ok())
-			.map(|s| s.strip_prefix("Bearer ").map(|t| t == expected.as_str()).unwrap_or(false))
+			.map(|s| {
+				s.strip_prefix("Bearer ")
+					.map(|t| t == expected.as_str())
+					.unwrap_or(false)
+			})
 			.unwrap_or(false);
 		if !ok {
 			return (
@@ -382,12 +392,16 @@ async fn dispatch(
 	let crypto = sdk.mail_facade().get_crypto_entity_client();
 	match method {
 		"loadFolders" => {
-			let fs = load_folder_system(sdk).await.map_err(|e| BridgeFailure::from(e.to_string()))?;
+			let fs = load_folder_system(sdk)
+				.await
+				.map_err(|e| BridgeFailure::from(e.to_string()))?;
 			let out: Vec<Value> = fs.mail_sets().iter().map(folder_to_json).collect();
 			Ok(Value::Array(out))
-		}
+		},
 		"loadMails" => {
-			let fs = load_folder_system(sdk).await.map_err(|e| BridgeFailure::from(e.to_string()))?;
+			let fs = load_folder_system(sdk)
+				.await
+				.map_err(|e| BridgeFailure::from(e.to_string()))?;
 			let folder_id = params.get("folderId").and_then(|v| v.as_str());
 			let count = params
 				.get("count")
@@ -396,10 +410,15 @@ async fn dispatch(
 				.min(200) as usize;
 			let cursor = params.get("cursor").and_then(|v| v.as_str());
 			let mail_set = resolve_mail_set(&fs, folder_id)?;
-			let start = resolve_mail_set_entry_start(crypto.as_ref(), &mail_set.entries, cursor)
-				.await?;
+			let start =
+				resolve_mail_set_entry_start(crypto.as_ref(), &mail_set.entries, cursor).await?;
 			let entries: Vec<MailSetEntry> = crypto
-				.load_range::<MailSetEntry, CustomId>(&mail_set.entries, &start, count + 1, ListLoadDirection::DESC)
+				.load_range::<MailSetEntry, CustomId>(
+					&mail_set.entries,
+					&start,
+					count + 1,
+					ListLoadDirection::DESC,
+				)
 				.await
 				.map_err(|e| BridgeFailure::from(e.to_string()))?;
 			let mut raw_mails = Vec::with_capacity(entries.len());
@@ -408,42 +427,63 @@ async fn dispatch(
 				match crypto.load::<Mail, _>(&mail_id).await {
 					Ok(mail) => raw_mails.push(mail_to_raw(&mail)),
 					Err(err) => {
-						log::warn!("loadMails: skipping undecryptable mail {}: {}", mail_id, err);
+						log::warn!(
+							"loadMails: skipping undecryptable mail {}: {}",
+							mail_id,
+							err
+						);
 					},
 				}
 			}
 			Ok(Value::Array(raw_mails))
-		}
+		},
 		"loadMail" => {
-			let id = params.get("id").and_then(|v| v.as_str()).ok_or_else(|| BridgeFailure::from("missing id"))?;
-			let tid = IdTupleGenerated::try_from(id.to_string()).map_err(|_| BridgeFailure::from("invalid mail id"))?;
+			let id = params
+				.get("id")
+				.and_then(|v| v.as_str())
+				.ok_or_else(|| BridgeFailure::from("missing id"))?;
+			let tid = IdTupleGenerated::try_from(id.to_string())
+				.map_err(|_| BridgeFailure::from("invalid mail id"))?;
 			let mail: Option<Mail> = crypto.load(&tid).await.ok();
 			match mail {
 				Some(m) => Ok(mail_to_raw(&m)),
 				None => Ok(Value::Null),
 			}
-		}
+		},
 		"loadMailDetails" => {
-			let mail_id_str =
-				params.get("mailId").and_then(|v| v.as_str()).ok_or_else(|| BridgeFailure::from("missing mailId"))?;
-			let tid =
-				IdTupleGenerated::try_from(mail_id_str.to_string()).map_err(|_| BridgeFailure::from("invalid mailId"))?;
-			let mail: Mail = crypto.load(&tid).await.map_err(|e| BridgeFailure::from(e.to_string()))?;
+			let mail_id_str = params
+				.get("mailId")
+				.and_then(|v| v.as_str())
+				.ok_or_else(|| BridgeFailure::from("missing mailId"))?;
+			let tid = IdTupleGenerated::try_from(mail_id_str.to_string())
+				.map_err(|_| BridgeFailure::from("invalid mailId"))?;
+			let mail: Mail = crypto
+				.load(&tid)
+				.await
+				.map_err(|e| BridgeFailure::from(e.to_string()))?;
 			let details = sdk
 				.load_mail_details_for_mail(&mail)
 				.await
 				.map_err(|e| BridgeFailure::from(e.to_string()))?;
 			Ok(mail_details_to_raw(&details))
-		}
+		},
 		"loadAttachmentMeta" => {
-			let mail_id_str =
-				params.get("mailId").and_then(|v| v.as_str()).ok_or_else(|| BridgeFailure::from("missing mailId"))?;
-			let tid =
-				IdTupleGenerated::try_from(mail_id_str.to_string()).map_err(|_| BridgeFailure::from("invalid mailId"))?;
-			let mail: Mail = crypto.load(&tid).await.map_err(|e| BridgeFailure::from(e.to_string()))?;
+			let mail_id_str = params
+				.get("mailId")
+				.and_then(|v| v.as_str())
+				.ok_or_else(|| BridgeFailure::from("missing mailId"))?;
+			let tid = IdTupleGenerated::try_from(mail_id_str.to_string())
+				.map_err(|_| BridgeFailure::from("invalid mailId"))?;
+			let mail: Mail = crypto
+				.load(&tid)
+				.await
+				.map_err(|e| BridgeFailure::from(e.to_string()))?;
 			let mut out = Vec::new();
 			for att_id in &mail.attachments {
-				let f: TutanotaFile = crypto.load(att_id).await.map_err(|e| BridgeFailure::from(e.to_string()))?;
+				let f: TutanotaFile = crypto
+					.load(att_id)
+					.await
+					.map_err(|e| BridgeFailure::from(e.to_string()))?;
 				let id = f._id.as_ref().map(ToString::to_string).unwrap_or_default();
 				out.push(json!({
 					"id": id,
@@ -454,7 +494,7 @@ async fn dispatch(
 				}));
 			}
 			Ok(Value::Array(out))
-		}
+		},
 		"downloadAttachment" => {
 			let message_id = params
 				.get("messageId")
@@ -505,36 +545,48 @@ async fn dispatch(
 				"filename": file.name,
 				"contentType": file.mimeType.unwrap_or_else(|| "application/octet-stream".to_string()),
 			}))
-		}
+		},
 		"setUnread" => {
-			let id = params.get("id").and_then(|v| v.as_str()).ok_or_else(|| BridgeFailure::from("missing id"))?;
+			let id = params
+				.get("id")
+				.and_then(|v| v.as_str())
+				.ok_or_else(|| BridgeFailure::from("missing id"))?;
 			let unread = params
 				.get("unread")
 				.and_then(|v| v.as_bool())
 				.ok_or_else(|| BridgeFailure::from("missing unread"))?;
-			let tid = IdTupleGenerated::try_from(id.to_string()).map_err(|_| BridgeFailure::from("invalid mail id"))?;
+			let tid = IdTupleGenerated::try_from(id.to_string())
+				.map_err(|_| BridgeFailure::from("invalid mail id"))?;
 			sdk.mail_facade()
 				.set_unread_status_for_mails(vec![tid], unread)
 				.await
 				.map_err(|e| BridgeFailure::from(e.to_string()))?;
 			Ok(Value::Bool(true))
-		}
+		},
 		"trashMail" => {
-			let id = params.get("id").and_then(|v| v.as_str()).ok_or_else(|| BridgeFailure::from("missing id"))?;
-			let tid = IdTupleGenerated::try_from(id.to_string()).map_err(|_| BridgeFailure::from("invalid mail id"))?;
+			let id = params
+				.get("id")
+				.and_then(|v| v.as_str())
+				.ok_or_else(|| BridgeFailure::from("missing id"))?;
+			let tid = IdTupleGenerated::try_from(id.to_string())
+				.map_err(|_| BridgeFailure::from("invalid mail id"))?;
 			sdk.mail_facade()
 				.trash_mails(vec![tid])
 				.await
 				.map_err(|e| BridgeFailure::from(e.to_string()))?;
 			Ok(Value::Bool(true))
-		}
+		},
 		"moveMail" => {
-			let id = params.get("id").and_then(|v| v.as_str()).ok_or_else(|| BridgeFailure::from("missing id"))?;
+			let id = params
+				.get("id")
+				.and_then(|v| v.as_str())
+				.ok_or_else(|| BridgeFailure::from("missing id"))?;
 			let target = params
 				.get("targetFolderId")
 				.and_then(|v| v.as_str())
 				.ok_or_else(|| BridgeFailure::from("missing targetFolderId"))?;
-			let tid = IdTupleGenerated::try_from(id.to_string()).map_err(|_| BridgeFailure::from("invalid mail id"))?;
+			let tid = IdTupleGenerated::try_from(id.to_string())
+				.map_err(|_| BridgeFailure::from("invalid mail id"))?;
 			if !is_trash_folder_target(target) {
 				return Err(BridgeFailure::from(format!(
 					"moveMail: only trash is supported by the SDK simple move service (got {target})"
@@ -545,14 +597,16 @@ async fn dispatch(
 				.await
 				.map_err(|e| BridgeFailure::from(e.to_string()))?;
 			Ok(Value::Bool(true))
-		}
+		},
 		"sendMail" => {
 			let input = parse_send_request(params, login_mail)?;
 			let input_debug = send_input_debug(&input);
 			let sent = sdk.send_mail_standard(input).await.map_err(|e| match e {
 				ApiCallError::ExternalSecureSendUnavailable { message } => BridgeFailure {
 					message,
-					debug: Some(format!("send flow (password-protected external) | {input_debug}")),
+					debug: Some(format!(
+						"send flow (password-protected external) | {input_debug}"
+					)),
 					error_code: Some(ERROR_CODE_EXTERNAL_SECURE_SEND_UNAVAILABLE.to_string()),
 				},
 				e => BridgeFailure {
@@ -564,7 +618,7 @@ async fn dispatch(
 				},
 			})?;
 			Ok(json!({ "messageId": sent.messageId }))
-		}
+		},
 		_ => Err(BridgeFailure::from(format!("Unknown method {method}"))),
 	}
 }
@@ -587,15 +641,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 	let api_url = std::env::var("TUTA_MAIL_BRIDGE_API_URL")
 		.or_else(|_| std::env::var("TUTA_API_URL"))
 		.unwrap_or_else(|_| "https://app.tuta.com".to_string());
-	let mail = std::env::var("TUTA_MAIL_BRIDGE_MAIL").map_err(|_| "TUTA_MAIL_BRIDGE_MAIL is required")?;
-	let password =
-		std::env::var("TUTA_MAIL_BRIDGE_PASSWORD").map_err(|_| "TUTA_MAIL_BRIDGE_PASSWORD is required")?;
+	let mail =
+		std::env::var("TUTA_MAIL_BRIDGE_MAIL").map_err(|_| "TUTA_MAIL_BRIDGE_MAIL is required")?;
+	let password = std::env::var("TUTA_MAIL_BRIDGE_PASSWORD")
+		.map_err(|_| "TUTA_MAIL_BRIDGE_PASSWORD is required")?;
 	let data_dir: PathBuf = std::env::var("TUTA_MAIL_BRIDGE_DATA_DIR")
 		.map(PathBuf::from)
 		.unwrap_or_else(|_| std::env::temp_dir().join("tuta-mail-api-bridge-data"));
 	std::fs::create_dir_all(&data_dir)?;
-	let listen = std::env::var("TUTA_MAIL_BRIDGE_LISTEN").unwrap_or_else(|_| "127.0.0.1:4711".to_string());
-	let bridge_token = std::env::var("TUTA_MAIL_BRIDGE_TOKEN").ok().filter(|s| !s.is_empty());
+	let listen =
+		std::env::var("TUTA_MAIL_BRIDGE_LISTEN").unwrap_or_else(|_| "127.0.0.1:4711".to_string());
+	let bridge_token = std::env::var("TUTA_MAIL_BRIDGE_TOKEN")
+		.ok()
+		.filter(|s| !s.is_empty());
 
 	let rest = Arc::new(NativeRestClient::try_new()?);
 	let file = Arc::new(NativeFileClient::try_new(data_dir)?);
@@ -603,7 +661,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 	let sdk = Sdk::new(api_url.clone(), rest, file);
 	log::set_max_level(log::LevelFilter::Info);
 	info!("Logging in to {api_url} as {mail} …");
-	let logged_in = sdk.create_session(&mail, &password).await.map_err(|e| format!("login: {e}"))?;
+	let logged_in = sdk
+		.create_session(&mail, &password)
+		.await
+		.map_err(|e| format!("login: {e}"))?;
 	let state = Arc::new(AppState {
 		sdk: logged_in,
 		bridge_token,
@@ -832,4 +893,3 @@ mod tests {
 		assert!(send_input_debug(&input).contains("externalPasswordProvided=false"));
 	}
 }
-
