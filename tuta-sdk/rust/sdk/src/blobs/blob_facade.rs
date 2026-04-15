@@ -1,18 +1,21 @@
 use crate::bindings::rest_client;
-use crate::bindings::rest_client::HttpMethod::POST;
+use crate::bindings::rest_client::HttpMethod::{GET, POST};
 use crate::bindings::rest_client::RestClient;
 use crate::bindings::rest_client::{RestClientOptions, RestResponse};
 use crate::bindings::suspendable_rest_client::SuspensionBehavior;
 use crate::blobs::binary_blob_wrapper_serializer::{
-	serialize_new_blobs_in_binary_chunks, KeyedNewBlobWrapper, NewBlobWrapper,
-	MAX_NUMBER_OF_BLOBS_IN_BINARY,
+	parse_multiple_blobs_response, serialize_new_blobs_in_binary_chunks, KeyedNewBlobWrapper,
+	NewBlobWrapper, MAX_NUMBER_OF_BLOBS_IN_BINARY,
 };
 use crate::blobs::blob_access_token_cache::BlobWriteTokenKey;
 #[cfg_attr(test, mockall_double::double)]
 use crate::blobs::blob_access_token_facade::BlobAccessTokenFacade;
-use crate::entities::generated::storage::{BlobGetIn, BlobPostOut, BlobServerAccessInfo};
-use crate::entities::generated::sys::BlobReferenceTokenWrapper;
+use crate::crypto_entity_client::CryptoEntityClient;
+use crate::entities::generated::storage::{BlobGetIn, BlobId, BlobPostOut, BlobServerAccessInfo};
+use crate::entities::generated::sys::{Blob, BlobReferenceTokenWrapper};
+use crate::entities::generated::tutanota::TutanotaFile;
 use crate::entities::Entity;
+use crate::element_value::ParsedEntity;
 use crate::instance_mapper::InstanceMapper;
 use crate::json_element::RawEntity;
 use crate::json_serializer::JsonSerializer;
@@ -20,14 +23,17 @@ use crate::rest_error::HttpError;
 use crate::tutanota_constants::{
 	ArchiveDataType, MAX_BLOB_SERVICE_BYTES, MAX_UNENCRYPTED_BLOB_SIZE_BYTES,
 };
+use crate::metamodel::ElementType;
 use crate::type_model_provider::TypeModelProvider;
-use crate::GeneratedId;
-use crate::{crypto, ApiCallError, HeadersProvider};
+use crate::TypeRef;
+use crate::{crypto, ApiCallError, CustomId, GeneratedId, HeadersProvider};
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use crypto::sha256;
 use crypto_primitives::aes::Iv;
 use crypto_primitives::key::GenericAesKey;
 use crypto_primitives::randomizer_facade::RandomizerFacade;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -51,6 +57,10 @@ pub struct FileData<'a> {
 }
 
 impl BlobFacade {
+	fn random_aggregate_custom_id(&self) -> CustomId {
+		CustomId(BASE64_URL_SAFE_NO_PAD.encode(self.randomizer_facade.generate_random_array::<4>()))
+	}
+
 	pub(crate) fn new(
 		blob_access_token_facade: BlobAccessTokenFacade,
 		rest_client: Arc<dyn RestClient>,
@@ -423,6 +433,269 @@ impl BlobFacade {
 		}
 
 		Ok(blob_reference_token_wrappers)
+	}
+
+	/// Download all chunks of a [`TutanotaFile`] from BlobService, decrypt with `session_key`, and concatenate.
+	pub async fn download_and_decrypt_file_attachment(
+		&self,
+		archive_data_type: ArchiveDataType,
+		file: &TutanotaFile,
+		session_key: &GenericAesKey,
+	) -> Result<Vec<u8>, ApiCallError> {
+		if file.blobs.is_empty() {
+			return Ok(Vec::new());
+		}
+		let file_id = file
+			._id
+			.as_ref()
+			.ok_or_else(|| ApiCallError::internal("TutanotaFile has no _id".into()))?;
+		let mut encrypted: HashMap<GeneratedId, Vec<u8>> = HashMap::new();
+		let mut i = 0usize;
+		while i < file.blobs.len() {
+			let archive_id = file.blobs[i].archiveId.clone();
+			let mut same_arch: Vec<Blob> = Vec::new();
+			while i < file.blobs.len() && file.blobs[i].archiveId == archive_id {
+				same_arch.push(file.blobs[i].clone());
+				i += 1;
+			}
+			let access = self
+				.blob_access_token_facade
+				.request_read_token_for_file_instance(
+					archive_data_type,
+					&archive_id,
+					&file_id.list_id,
+					&file_id.element_id,
+				)
+				.await?;
+			const BLOB_PROCESS_NUM: usize = 100;
+			for chunk in same_arch.chunks(BLOB_PROCESS_NUM) {
+				let batch_map = self
+					.download_encrypted_blob_batch_chunk(&access, &archive_id, chunk)
+					.await?;
+				for b in chunk {
+					let data = batch_map.get(&b.blobId).cloned().ok_or_else(|| {
+						ApiCallError::internal(format!(
+							"blob service response missing blob {}",
+							b.blobId
+						))
+					})?;
+					encrypted.insert(b.blobId.clone(), data);
+				}
+			}
+		}
+		let mut plain_parts = Vec::with_capacity(file.blobs.len());
+		for b in &file.blobs {
+			let cipher = encrypted.get(&b.blobId).ok_or_else(|| {
+				ApiCallError::internal(format!("internal error: blob {} missing", b.blobId))
+			})?;
+			let plain = session_key
+				.decrypt_data(cipher.as_slice())
+				.map_err(|e| ApiCallError::internal_with_err(e, "decrypt attachment chunk"))?;
+			plain_parts.push(plain);
+		}
+		let total: usize = plain_parts.iter().map(|v| v.len()).sum();
+		let mut out = Vec::with_capacity(total);
+		for p in plain_parts {
+			out.extend_from_slice(&p);
+		}
+		Ok(out)
+	}
+
+	/// Encrypted instances from blob-server `GET …?ids=…` (before crypto decrypt).
+	pub(crate) async fn fetch_blob_element_parsed_entities(
+		&self,
+		type_ref: &TypeRef,
+		archive_list_id: &GeneratedId,
+		element_ids: &[GeneratedId],
+	) -> Result<Vec<ParsedEntity>, ApiCallError> {
+		let client_tm = self
+			.type_model_provider
+			.resolve_client_type_ref(type_ref)
+			.ok_or_else(|| ApiCallError::internal("missing client type model".into()))?;
+		if client_tm.element_type != ElementType::BlobElement {
+			return Err(ApiCallError::internal(format!(
+				"fetch_blob_element_parsed_entities: type {} is not BlobElement",
+				client_tm.name
+			)));
+		}
+
+		let access = self
+			.blob_access_token_facade
+			.request_read_token_archive(archive_list_id)
+			.await?;
+
+		let ids_joined = element_ids
+			.iter()
+			.map(std::string::ToString::to_string)
+			.collect::<Vec<_>>()
+			.join(",");
+
+		let model_version = client_tm.version;
+		let mut query_pairs: Vec<(String, String)> = vec![
+			("ids".to_string(), ids_joined),
+			("blobAccessToken".to_string(), access.blobAccessToken.clone()),
+			("v".to_string(), model_version.to_string()),
+		];
+		query_pairs.extend(
+			self.auth_headers_provider
+				.provide_headers(model_version),
+		);
+		let encoded = rest_client::encode_query_params(query_pairs);
+
+		let type_name_lower = client_tm.name.to_lowercase();
+		let app_str = client_tm.app.to_string();
+		let path_suffix = format!(
+			"/rest/{}/{}/{}",
+			app_str, type_name_lower, archive_list_id
+		);
+
+		for server in &access.servers {
+			let base = server.url.trim_end_matches('/');
+			let url = format!("{base}{path_suffix}{encoded}");
+
+			let maybe_response = self
+				.rest_client
+				.request_binary(
+					url,
+					GET,
+					RestClientOptions {
+						headers: HashMap::new(),
+						body: None,
+						suspension_behavior: Some(SuspensionBehavior::Suspend),
+					},
+				)
+				.await;
+
+			let response = match maybe_response {
+				Ok(r) => r,
+				Err(e) => return Err(e.into()),
+			};
+
+			if !(200..=299).contains(&response.status) {
+				match HttpError::from_http_response(response.status, &response.headers) {
+					Ok(
+						HttpError::ConnectionError
+						| HttpError::InternalServerError
+						| HttpError::NotFoundError,
+					) => continue,
+					Ok(error) => return Err(error.into()),
+					Err(error) => return Err(error.into()),
+				}
+			}
+
+			let Some(body) = response.body else {
+				return Err(ApiCallError::internal(
+					"blob-element GET: empty response body".into(),
+				));
+			};
+
+			let raw_vec: Vec<RawEntity> = serde_json::from_slice(body.as_slice()).map_err(|e| {
+				ApiCallError::internal_with_err(e, "blob-element GET: invalid json")
+			})?;
+			let mut parsed_entities: Vec<ParsedEntity> = Vec::with_capacity(raw_vec.len());
+			for raw in raw_vec {
+				let p = self.json_serializer.parse(type_ref, raw).map_err(|e| {
+					ApiCallError::internal_with_err(e, "blob-element GET: parse entity")
+				})?;
+				parsed_entities.push(p);
+			}
+			return Ok(parsed_entities);
+		}
+
+		Err(ApiCallError::internal(
+			"blob-element GET: no servers responded successfully".into(),
+		))
+	}
+
+	/// Load blob-element instances via archive read token and blob-server `GET …?ids=…` (TS `loadMultipleBlobElements`).
+	pub async fn load_blob_element_entities<T>(
+		&self,
+		crypto: &CryptoEntityClient,
+		archive_list_id: &GeneratedId,
+		element_ids: &[GeneratedId],
+	) -> Result<Vec<T>, ApiCallError>
+	where
+		T: Entity + DeserializeOwned,
+	{
+		let parsed_entities = self
+			.fetch_blob_element_parsed_entities(&T::type_ref(), archive_list_id, element_ids)
+			.await?;
+		crypto.decrypt_parsed_instances::<T>(parsed_entities).await
+	}
+
+	async fn download_encrypted_blob_batch_chunk(
+		&self,
+		access: &BlobServerAccessInfo,
+		archive_id: &GeneratedId,
+		blobs: &[Blob],
+	) -> Result<HashMap<GeneratedId, Vec<u8>>, ApiCallError> {
+		let blob_get_in = BlobGetIn {
+			_format: 0,
+			archiveId: archive_id.clone(),
+			blobId: None,
+			blobIds: blobs
+				.iter()
+				.map(|b| BlobId {
+					// Metamodel: `BlobId._id` is cardinality One (aggregate id); null breaks JSON serialize.
+					_id: Some(self.random_aggregate_custom_id()),
+					blobId: b.blobId.clone(),
+				})
+				.collect(),
+		};
+		let parsed = self
+			.instance_mapper
+			.serialize_entity(blob_get_in)
+			.map_err(|e| ApiCallError::internal_with_err(e, "serialize BlobGetIn"))?;
+		let raw = self
+			.json_serializer
+			.serialize(&BlobGetIn::type_ref(), parsed)?;
+		let body = serde_json::to_vec(&raw)
+			.map_err(|e| ApiCallError::internal_with_err(e, "encode BlobGetIn JSON"))?;
+		let query_params = self.create_query_params_multiple_blobs(access.blobAccessToken.clone());
+		let encoded_query_params = rest_client::encode_query_params(query_params);
+		for server in &access.servers {
+			let maybe_response = self
+				.rest_client
+				.request_binary(
+					format!(
+						"{}{}{}",
+						server.url, BLOB_SERVICE_REST_PATH, encoded_query_params
+					),
+					GET,
+					RestClientOptions {
+						headers: Default::default(),
+						body: Some(body.clone()),
+						suspension_behavior: Some(SuspensionBehavior::Suspend),
+					},
+				)
+				.await;
+			match maybe_response {
+				Ok(RestResponse {
+					status: 200,
+					body,
+					..
+				}) => {
+					let bytes = body.ok_or_else(|| ApiCallError::internal("empty blob GET body".into()))?;
+					return parse_multiple_blobs_response(bytes.as_slice())
+						.map_err(|e| ApiCallError::internal(e.to_string()));
+				},
+				Ok(RestResponse { status, .. }) => {
+					match HttpError::from_http_response(status, &Default::default()) {
+						Ok(
+							HttpError::ConnectionError
+							| HttpError::InternalServerError
+							| HttpError::NotFoundError,
+						) => continue,
+						Ok(error) => return Err(error.into()),
+						Err(error) => return Err(error.into()),
+					}
+				},
+				Err(error) => return Err(error.into()),
+			}
+		}
+		Err(ApiCallError::InternalSdkError {
+			error_message: "blob GET: no servers responded successfully".into(),
+		})
 	}
 
 	fn handle_post_response_single_legacy(

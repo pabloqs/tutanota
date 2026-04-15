@@ -1,7 +1,7 @@
 use crate::blobs::blob_access_token_cache::{BlobAccessTokenCache, BlobWriteTokenKey};
 use crate::date::DateProvider;
 use crate::entities::generated::storage::{
-	BlobAccessTokenPostIn, BlobServerAccessInfo, BlobWriteData,
+	BlobAccessTokenPostIn, BlobReadData, BlobServerAccessInfo, BlobWriteData, InstanceId,
 };
 use crate::services::generated::storage::BlobAccessTokenService;
 #[cfg_attr(test, mockall_double::double)]
@@ -26,6 +26,12 @@ pub(crate) struct BlobAccessTokenFacade {
 }
 
 #[cfg_attr(test, mockall::automock)]
+fn random_aggregate_custom_id(rf: &RandomizerFacade) -> CustomId {
+	CustomId(
+		BASE64_URL_SAFE_NO_PAD.encode(rf.generate_random_array::<4>()),
+	)
+}
+
 impl BlobAccessTokenFacade {
 	pub fn new(
 		randomizer_facade: RandomizerFacade,
@@ -72,6 +78,58 @@ impl BlobAccessTokenFacade {
 				loader,
 			)
 			.await
+	}
+
+	/// Read token for blobs referenced by a single file instance (see TS `requestReadTokenBlobs`).
+	pub async fn request_read_token_for_file_instance(
+		&self,
+		archive_data_type: ArchiveDataType,
+		archive_id: &GeneratedId,
+		instance_list_id: &GeneratedId,
+		instance_element_id: &GeneratedId,
+	) -> Result<BlobServerAccessInfo, ApiCallError> {
+		let post_in = BlobAccessTokenPostIn {
+			_format: 0,
+			archiveDataType: Some(archive_data_type.discriminant()),
+			read: Some(BlobReadData {
+				_id: Some(random_aggregate_custom_id(&self.randomizer_facade)),
+				archiveId: archive_id.clone(),
+				instanceListId: Some(instance_list_id.clone()),
+				instanceIds: vec![InstanceId {
+					_id: Some(random_aggregate_custom_id(&self.randomizer_facade)),
+					instanceId: Some(instance_element_id.clone()),
+				}],
+			}),
+			write: None,
+		};
+		let out = self
+			.service_executor
+			.post::<BlobAccessTokenService>(post_in, ExtraServiceParams::default())
+			.await?;
+		Ok(out.blobAccessInfo)
+	}
+
+	/// Read token for all instances in an archive (see TS `requestReadTokenArchive`).
+	pub async fn request_read_token_archive(
+		&self,
+		archive_id: &GeneratedId,
+	) -> Result<BlobServerAccessInfo, ApiCallError> {
+		let post_in = BlobAccessTokenPostIn {
+			_format: 0,
+			archiveDataType: None,
+			read: Some(BlobReadData {
+				_id: Some(random_aggregate_custom_id(&self.randomizer_facade)),
+				archiveId: archive_id.clone(),
+				instanceListId: None,
+				instanceIds: vec![],
+			}),
+			write: None,
+		};
+		let out = self
+			.service_executor
+			.post::<BlobAccessTokenService>(post_in, ExtraServiceParams::default())
+			.await?;
+		Ok(out.blobAccessInfo)
 	}
 
 	/// Remove a given write token from the cache.

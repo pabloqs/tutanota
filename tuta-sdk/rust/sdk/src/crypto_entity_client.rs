@@ -5,15 +5,17 @@ use crate::crypto::asymmetric_crypto_facade::AsymmetricCryptoError;
 #[cfg_attr(test, mockall_double::double)]
 use crate::crypto::asymmetric_crypto_facade::AsymmetricCryptoFacade;
 #[cfg_attr(test, mockall_double::double)]
-use crate::crypto::crypto_facade::CryptoFacade;
+use crate::crypto::crypto_facade::{CryptoFacade, ResolvedSessionKey};
 use crate::crypto::key::AsymmetricKeyPair;
 use crate::crypto::public_key_provider::{PublicKeyIdentifier, PublicKeyLoadingError};
 use crate::crypto::X25519PublicKey;
 use crate::element_value::{ElementValue, ParsedEntity};
-use crate::entities::entity_facade::{EntityFacade, ID_FIELD};
+use crate::entities::entity_facade::{
+	EntityFacade, ID_FIELD, OWNER_ENC_SESSION_KEY_FIELD, OWNER_GROUP_FIELD, OWNER_KEY_VERSION_FIELD,
+};
 use crate::entities::generated::base::PersistenceResourcePostReturn;
 use crate::entities::generated::sys::BucketKey;
-use crate::entities::generated::tutanota::{Mail, MailAddress};
+use crate::entities::generated::tutanota::{Mail, MailAddress, MailDetailsBlob, TutanotaFile};
 use crate::entities::Entity;
 #[cfg_attr(test, mockall_double::double)]
 use crate::entity_client::EntityClient;
@@ -32,6 +34,54 @@ use crate::{GeneratedId, TypeRef};
 use crypto_primitives::key::GenericAesKey;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+
+/// Copy mail `_ownerEncSessionKey` / `_ownerKeyVersion` / `_ownerGroup` onto another entity's parsed map when missing
+/// (TS `ownerEncSessionKeyProvider` / attachment loading).
+fn merge_mail_owner_fields_into_entity_parsed(
+	mail_tm: &TypeModel,
+	child_tm: &TypeModel,
+	mail_parsed: &ParsedEntity,
+	mut child: ParsedEntity,
+) -> Result<ParsedEntity, ApiCallError> {
+	fn attr_key(tm: &TypeModel, name: &str) -> Result<String, ApiCallError> {
+		tm.get_attribute_id_by_attribute_name(name)
+			.map_err(|e| ApiCallError::internal(e.to_string()))
+	}
+	let missing = |m: &ParsedEntity, k: &str| m.get(k).map_or(true, |v| matches!(v, ElementValue::Null));
+
+	let mail_enc = attr_key(mail_tm, OWNER_ENC_SESSION_KEY_FIELD)?;
+	let child_enc = attr_key(child_tm, OWNER_ENC_SESSION_KEY_FIELD)?;
+	if let Some(ElementValue::Bytes(ref sk)) = mail_parsed.get(&mail_enc) {
+		if !sk.is_empty() {
+			child.insert(child_enc, ElementValue::Bytes(sk.clone()));
+		}
+	}
+
+	let mail_ver = attr_key(mail_tm, OWNER_KEY_VERSION_FIELD)?;
+	let child_ver = attr_key(child_tm, OWNER_KEY_VERSION_FIELD)?;
+	if mail_parsed
+		.get(&mail_enc)
+		.is_some_and(|v| matches!(v, ElementValue::Bytes(b) if !b.is_empty()))
+	{
+		if let Some(v) = mail_parsed.get(&mail_ver) {
+			if !matches!(v, ElementValue::Null) {
+				child.insert(child_ver, v.clone());
+			}
+		}
+	}
+
+	let mail_grp = attr_key(mail_tm, OWNER_GROUP_FIELD)?;
+	let child_grp = attr_key(child_tm, OWNER_GROUP_FIELD)?;
+	if missing(&child, &child_grp) {
+		if let Some(v) = mail_parsed.get(&mail_grp) {
+			if !matches!(v, ElementValue::Null) {
+				child.insert(child_grp, v.clone());
+			}
+		}
+	}
+
+	Ok(child)
+}
 
 // A high level interface to manipulate encrypted entities/instances via the REST API
 pub struct CryptoEntityClient {
@@ -66,6 +116,84 @@ impl CryptoEntityClient {
 	#[must_use]
 	pub fn get_crypto_facade(&self) -> &Arc<CryptoFacade> {
 		&self.crypto_facade
+	}
+
+	/// Serialize a decrypted typed entity to [`ParsedEntity`] (no encryption step).
+	pub fn typed_instance_to_parsed<T: Entity + Serialize>(
+		&self,
+		instance: T,
+	) -> Result<ParsedEntity, ApiCallError> {
+		self.instance_mapper
+			.serialize_entity(instance)
+			.map_err(|e| ApiCallError::internal_with_err(e, "serialize typed entity"))
+	}
+
+	/// When `MailDetailsBlob` from the blob service omits owner session key material, copy it from
+	/// the parent `Mail` (TS `MailFacade.keyProviderFromInstance` + `loadMailDetailsBlob`).
+	pub async fn decrypt_mail_details_blob_using_mail_owner_fallback(
+		&self,
+		mail: &Mail,
+		blob_parsed: ParsedEntity,
+	) -> Result<MailDetailsBlob, ApiCallError> {
+		let mail_parsed = self.typed_instance_to_parsed(mail.clone())?;
+		let mail_tm = self.entity_client.resolve_server_type_ref(&Mail::type_ref())?;
+		let blob_tm = self.entity_client.resolve_server_type_ref(&MailDetailsBlob::type_ref())?;
+		let merged = merge_mail_owner_fields_into_entity_parsed(
+			mail_tm.as_ref(),
+			blob_tm.as_ref(),
+			&mail_parsed,
+			blob_parsed,
+		)?;
+		let decrypted = self
+			.process_encrypted_entity(blob_tm.as_ref(), merged)
+			.await?;
+		self.instance_mapper
+			.parse_entity::<MailDetailsBlob>(decrypted)
+			.map_err(|e| ApiCallError::internal_with_err(e, "parse MailDetailsBlob"))
+	}
+
+	/// Resolve session key for a mail attachment: owner fields on the file if set, else mail `bucketKey`.
+	/// Mail `_ownerEncSessionKey` must not be copied onto the file (wrong key material).
+	pub async fn resolve_session_key_for_tutanota_file_with_mail(
+		&self,
+		mail: &Mail,
+		file: &TutanotaFile,
+	) -> Result<ResolvedSessionKey, ApiCallError> {
+		let file_parsed = self.typed_instance_to_parsed(file.clone())?;
+		let file_tm = self.entity_client.resolve_client_type_ref(&TutanotaFile::type_ref())?;
+
+		let file_resolve_note = match self
+			.crypto_facade
+			.resolve_session_key(&file_parsed, file_tm)
+			.await
+		{
+			Ok(Some(k)) => return Ok(k),
+			Ok(None) => "resolve_session_key(TutanotaFile): Ok(None)".to_string(),
+			Err(e) => format!("resolve_session_key(TutanotaFile): {}", e),
+		};
+
+		let mail_parsed = self.typed_instance_to_parsed(mail.clone())?;
+		let mail_tm = self.entity_client.resolve_client_type_ref(&Mail::type_ref())?;
+
+		let fid = file
+			._id
+			.as_ref()
+			.ok_or_else(|| ApiCallError::internal("TutanotaFile has no _id".into()))?;
+		self
+			.crypto_facade
+			.resolve_session_key_for_attachment_from_mail_bucket(
+				&mail_parsed,
+				mail_tm,
+				&fid.list_id,
+				&fid.element_id,
+			)
+			.await
+			.map_err(|e| {
+				ApiCallError::internal(format!(
+					"attachment session key: {}; resolve_session_key_for_attachment_from_mail_bucket(Mail): {}",
+					file_resolve_note, e
+				))
+			})
 	}
 
 	pub async fn load<T: Entity + DeserializeOwned, ID: IdType>(
@@ -127,6 +255,14 @@ impl CryptoEntityClient {
 			.await?;
 
 		self.process_server_response(parsed_entities).await
+	}
+
+	/// Decrypt instances returned from reads that bypass [`EntityClient::load`] (e.g. blob-element `GET …?ids=…`).
+	pub async fn decrypt_parsed_instances<T: Entity + DeserializeOwned>(
+		&self,
+		entities: Vec<ParsedEntity>,
+	) -> Result<Vec<T>, ApiCallError> {
+		self.process_server_response(entities).await
 	}
 
 	pub fn serialize_entity<Instance: Entity + Serialize>(

@@ -55,6 +55,28 @@ pub struct PubEncSymKey {
 	recipient_key_version: u64,
 }
 
+impl PubEncSymKey {
+	#[must_use]
+	pub fn pub_enc_sym_key_bytes(&self) -> &[u8] {
+		&self.pub_enc_sym_key_bytes
+	}
+
+	#[must_use]
+	pub fn crypto_protocol_version(&self) -> &CryptoProtocolVersion {
+		&self.crypto_protocol_version
+	}
+
+	#[must_use]
+	pub fn sender_key_version(&self) -> Option<u64> {
+		self.sender_key_version
+	}
+
+	#[must_use]
+	pub fn recipient_key_version(&self) -> u64 {
+		self.recipient_key_version
+	}
+}
+
 #[derive(thiserror::Error, Debug)]
 #[error("AsymmetricCryptoError")]
 pub enum AsymmetricCryptoError {

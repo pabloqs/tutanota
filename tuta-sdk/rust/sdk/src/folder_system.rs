@@ -33,6 +33,11 @@ impl FolderSystem {
 	}
 
 	#[must_use]
+	pub fn mail_sets(&self) -> &[MailSet] {
+		&self.folders
+	}
+
+	#[must_use]
 	pub fn system_folder_by_type(&self, mail_set_kind: MailSetKind) -> Option<&MailSet> {
 		self.folders
 			.iter()

@@ -1,0 +1,38 @@
+{
+	"name": "@tutao/tuta-mail-api",
+	"version": "341.260409.1",
+	"license": "GPL-3.0",
+	"main": "./dist/index.js",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/tutao/tutanota.git",
+		"directory": "packages/tuta-mail-api"
+	},
+	"scripts": {
+		"build": "tsc -b",
+		"start": "node dist/index.js",
+		"test": "node --import tsx --test \"test/**/*.test.ts\"",
+		"rest-smoke": "bash scripts/rest-smoke-test.sh"
+	},
+	"type": "module",
+	"files": [
+		"dist/*",
+		"tsconfig.json"
+	],
+	"dependencies": {
+		"better-sqlite3": "11.8.1",
+		"express": "5.1.0",
+		"body-parser": "2.2.0"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "7.6.11",
+		"typescript": "5.8.3",
+		"tsx": "^4.20.6",
+		"@types/express": "5.0.3",
+		"@tutao/otest": "341.260409.1",
+		"@tutao/tutanota-utils": "341.260409.1"
+	},
+	"engines": {
+		"node": ">= 20"
+	}
+}

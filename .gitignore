@@ -30,3 +30,4 @@ DerivedData/
 tuta-sdk/rust/out
 tuta-sdk/android
 import-trace.json
+.env.mail-api

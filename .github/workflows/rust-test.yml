@@ -6,6 +6,7 @@ on:
     paths:
       - 'tuta-sdk/**'
       - 'packages/node-mimimi/**'
+      - 'packages/tuta-mail-api-bridge/**'
       - '.github/workflows/rust-test.yml'
   push:
     branches:

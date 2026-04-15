@@ -1288,7 +1288,7 @@ impl SerializeMap for ElementValueMapSerializer<'_> {
 }
 
 impl ElementValue {
-	fn as_unexpected(&self) -> Unexpected {
+	fn as_unexpected(&self) -> Unexpected<'_> {
 		match self {
 			ElementValue::Null => Unexpected::Other("null"),
 			ElementValue::String(v) => Unexpected::Str(v),

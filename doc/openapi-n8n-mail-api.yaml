@@ -1,0 +1,816 @@
+openapi: 3.0.3
+info:
+  title: Tuta n8n Mail API
+  version: 1.1.0
+  description: |
+    Secure API for n8n automation against Tuta mailbox operations.
+    Includes read, send, move, mark read/unread, delete, and attachment download endpoints
+    with token-based auth and scope enforcement.
+
+    Designed for SMTP/IMAP feature parity: exposes all standard mail headers, authentication
+    status, threading metadata, inline attachments, and message state management.
+
+servers:
+  - url: https://your-domain.example/api
+    description: Production
+  - url: https://staging-your-domain.example/api
+    description: Staging
+
+tags:
+  - name: health
+  - name: folders
+  - name: messages
+  - name: attachments
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/health:
+    get:
+      tags: [health]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, mail]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  mail:
+                    type: object
+                    description: >
+                      How this standalone API process connects to Tuta for mail.
+                      The Node service always runs alone; real mailbox I/O in production
+                      uses MAIL_API_SERVICE_MODE=tuta plus TUTA_BRIDGE_BASE_URL (SDK sidecar).
+                    required:
+                      [serviceMode, kind, tutaApiUrl, bridgeBaseUrl, mailOperationsReady, detail]
+                    properties:
+                      serviceMode:
+                        type: string
+                        enum: [dev, tuta]
+                      kind:
+                        type: string
+                        enum: [dev_stub, http_bridge, tuta_unconfigured]
+                      tutaApiUrl:
+                        type: string
+                        format: uri
+                      bridgeBaseUrl:
+                        type: string
+                        nullable: true
+                        format: uri
+                      mailOperationsReady:
+                        type: boolean
+                      detail:
+                        type: string
+        "500":
+          description: Service unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/folders:
+    get:
+      tags: [folders]
+      summary: List available folders
+      operationId: listFolders
+      x-required-scope: mail:read:folders
+      responses:
+        "200":
+          description: Folder list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Folder"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/messages:
+    get:
+      tags: [messages]
+      summary: List messages with optional filtering
+      operationId: listMessages
+      x-required-scope: mail:read:messages
+      parameters:
+        - in: query
+          name: folder
+          required: false
+          schema:
+            type: string
+          description: Folder id or folder kind alias (inbox, sent, trash, archive, spam, draft).
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+          description: Opaque cursor for pagination (from previous response).
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - in: query
+          name: since
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Filter messages received on or after this ISO 8601 timestamp.
+        - in: query
+          name: before
+          required: false
+          schema:
+            type: string
+            format: date-time
+          description: Filter messages received before this ISO 8601 timestamp.
+        - in: query
+          name: unread
+          required: false
+          schema:
+            type: boolean
+          description: "Filter by read/unread status: true = unread only, false = read only."
+        - in: query
+          name: from
+          required: false
+          schema:
+            type: string
+          description: Filter by sender address (case-insensitive substring match).
+        - in: query
+          name: hasAttachments
+          required: false
+          schema:
+            type: boolean
+          description: "Filter by attachment presence: true = has attachments, false = no attachments."
+      responses:
+        "200":
+          description: Paginated message summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MessageSummary"
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/messages/{id}:
+    get:
+      tags: [messages]
+      summary: Get message detail with full SMTP header parity
+      operationId: getMessage
+      x-required-scope: mail:read:messages
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Message detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/MessageDetail"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+    patch:
+      tags: [messages]
+      summary: Update message status (mark read/unread)
+      operationId: updateMessage
+      x-required-scope: mail:write
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMessageRequest"
+      responses:
+        "200":
+          description: Message updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/UpdateMessageResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+    delete:
+      tags: [messages]
+      summary: Trash a message (soft delete)
+      operationId: deleteMessage
+      x-required-scope: mail:delete
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Message trashed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/DeleteMessageResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/messages/{id}/attachments/{attachmentId}:
+    get:
+      tags: [attachments]
+      summary: Download attachment binary content
+      operationId: downloadAttachment
+      x-required-scope: mail:read:messages
+      description: |
+        Streams the decrypted attachment content with appropriate Content-Type
+        and Content-Disposition headers. Supports inline attachments (Content-ID)
+        for MIME multipart/related parity.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Message ID that owns the attachment.
+        - in: path
+          name: attachmentId
+          required: true
+          schema:
+            type: string
+          description: Attachment ID (from MessageDetail.attachments[].id).
+      responses:
+        "200":
+          description: Attachment binary content
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: 'attachment; filename="original-name.ext"'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Attachment or message not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "413":
+          description: Attachment exceeds download size limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/messages/send:
+    post:
+      tags: [messages]
+      summary: Send a message
+      operationId: sendMessage
+      x-required-scope: mail:send
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "200":
+          description: Message accepted/sent
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SendMessageResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "413":
+          description: Payload too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /v1/messages/{id}/move:
+    post:
+      tags: [messages]
+      summary: Move a message to another folder
+      operationId: moveMessage
+      x-required-scope: mail:move
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MoveMessageRequest"
+      responses:
+        "200":
+          description: Message moved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/MoveMessageResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: OpaqueToken
+
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - auth_error
+                - permission_error
+                - rate_limit_error
+                - upstream_unavailable
+                - validation_error
+                - internal_error
+            message:
+              type: string
+            requestId:
+              type: string
+
+    Pagination:
+      type: object
+      required: [limit, hasMore]
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+        nextCursor:
+          type: string
+          nullable: true
+        hasMore:
+          type: boolean
+
+    Folder:
+      type: object
+      required: [id, name, kind]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [inbox, sent, trash, archive, spam, draft, custom, all]
+
+    EmailAddress:
+      type: object
+      required: [address]
+      properties:
+        name:
+          type: string
+          nullable: true
+        address:
+          type: string
+          format: email
+
+    MessageSummary:
+      type: object
+      required: [id, subject, receivedAt, unread, folderIds, from]
+      properties:
+        id:
+          type: string
+        subject:
+          type: string
+        receivedAt:
+          type: string
+          format: date-time
+          description: When the message was received by the server.
+        sentAt:
+          type: string
+          format: date-time
+          description: When the message was sent (SMTP Date header equivalent).
+        unread:
+          type: boolean
+          description: "Read status (IMAP \\Seen flag equivalent: true = unread)."
+        confidential:
+          type: boolean
+          description: Whether the message is end-to-end encrypted.
+        state:
+          type: string
+          enum: [received, draft, sent]
+          description: "Mail state: received (inbound), draft (unsent), sent (outbound)."
+        hasAttachments:
+          type: boolean
+          description: Whether the message has any attachments.
+        folderIds:
+          type: array
+          items:
+            type: string
+        from:
+          $ref: "#/components/schemas/EmailAddress"
+
+    MessageAttachment:
+      type: object
+      required: [id, filename, contentType, sizeBytes]
+      properties:
+        id:
+          type: string
+          description: Attachment ID for use with the download endpoint.
+        filename:
+          type: string
+        contentType:
+          type: string
+          description: MIME type of the attachment.
+        sizeBytes:
+          type: integer
+        contentId:
+          type: string
+          nullable: true
+          description: |
+            Content-ID for inline attachments (MIME multipart/related).
+            Present when the attachment is referenced inline in the HTML body via cid: URIs.
+
+    MessageDetail:
+      allOf:
+        - $ref: "#/components/schemas/MessageSummary"
+        - type: object
+          properties:
+            to:
+              type: array
+              items:
+                $ref: "#/components/schemas/EmailAddress"
+              description: To recipients (SMTP To header).
+            cc:
+              type: array
+              items:
+                $ref: "#/components/schemas/EmailAddress"
+              description: CC recipients (SMTP Cc header).
+            bcc:
+              type: array
+              items:
+                $ref: "#/components/schemas/EmailAddress"
+              description: BCC recipients (SMTP Bcc header, only visible to sender).
+            replyTo:
+              type: array
+              items:
+                $ref: "#/components/schemas/EmailAddress"
+              description: Reply-To addresses (SMTP Reply-To header).
+            envelopeSender:
+              type: string
+              nullable: true
+              description: |
+                Envelope sender if different from From address.
+                Maps to SMTP Return-Path / MAIL FROM. Null when same as From.
+            authStatus:
+              type: string
+              nullable: true
+              enum: [pass, fail, soft_fail, none, unknown]
+              description: |
+                Aggregate SPF/DKIM/DMARC authentication result.
+                Maps from Tuta Mail.authStatus.
+            phishingStatus:
+              type: string
+              enum: [unknown, suspicious, phishing]
+              description: Server-side phishing/spam classification.
+            listUnsubscribe:
+              type: boolean
+              description: Whether the List-Unsubscribe header was present in the original message.
+            replyType:
+              type: string
+              enum: [none, reply, reply_all, forward]
+              description: |
+                How this message relates to a previous message.
+                Maps from Tuta Mail.replyType. Equivalent to presence of In-Reply-To/References headers.
+            bodyHtml:
+              type: string
+              description: HTML body content (sanitized).
+            bodyText:
+              type: string
+              description: Plain text body content.
+            headers:
+              type: object
+              additionalProperties:
+                type: string
+              description: |
+                Raw SMTP headers as key-value pairs.
+                Decompressed from Tuta internal LZ4 storage. Includes all original
+                headers: Message-ID, In-Reply-To, References, X-headers, etc.
+            attachments:
+              type: array
+              items:
+                $ref: "#/components/schemas/MessageAttachment"
+
+    UpdateMessageRequest:
+      type: object
+      required: [unread]
+      properties:
+        unread:
+          type: boolean
+          description: "Set read/unread status (IMAP \\Seen flag equivalent)."
+
+    UpdateMessageResponse:
+      type: object
+      required: [messageId, unread]
+      properties:
+        messageId:
+          type: string
+        unread:
+          type: boolean
+
+    DeleteMessageResponse:
+      type: object
+      required: [messageId, trashed]
+      properties:
+        messageId:
+          type: string
+        trashed:
+          type: boolean
+          description: Whether the message was successfully moved to trash.
+
+    SendAttachment:
+      type: object
+      required: [filename, contentType, contentBase64]
+      properties:
+        filename:
+          type: string
+        contentType:
+          type: string
+        contentBase64:
+          type: string
+          description: Base64-encoded attachment content.
+
+    SendMessageRequest:
+      type: object
+      required: [to, subject]
+      properties:
+        from:
+          $ref: "#/components/schemas/EmailAddress"
+        to:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/EmailAddress"
+        cc:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmailAddress"
+        bcc:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmailAddress"
+        subject:
+          type: string
+          minLength: 1
+        bodyText:
+          type: string
+        bodyHtml:
+          type: string
+        replyTo:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmailAddress"
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/SendAttachment"
+
+    SendMessageResponse:
+      type: object
+      required: [messageId, status]
+      properties:
+        messageId:
+          type: string
+        status:
+          type: string
+          enum: [queued, sent]
+
+    MoveMessageRequest:
+      type: object
+      required: [targetFolderId]
+      properties:
+        targetFolderId:
+          type: string
+        idempotencyKey:
+          type: string
+
+    MoveMessageResponse:
+      type: object
+      required: [messageId, moved, targetFolderId]
+      properties:
+        messageId:
+          type: string
+        moved:
+          type: boolean
+        targetFolderId:
+          type: string

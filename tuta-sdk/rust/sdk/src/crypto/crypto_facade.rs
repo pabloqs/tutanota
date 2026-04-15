@@ -358,6 +358,116 @@ impl CryptoFacade {
 			sender_identity_pub_key,
 		})
 	}
+
+	/// Session key for a mail attachment [`TutanotaFile`] when it is only reachable via the parent mail's `bucketKey`
+	/// (TS `CryptoFacade.resolveWithBucketKey` + `createOwnerEncSessionKeyProviderForAttachments`).
+	pub async fn resolve_session_key_for_attachment_from_mail_bucket(
+		&self,
+		mail_parsed: &ParsedEntity,
+		mail_type_model: &TypeModel,
+		attachment_list_id: &GeneratedId,
+		attachment_element_id: &GeneratedId,
+	) -> Result<ResolvedSessionKey, SessionKeyResolutionError> {
+		let bucket_key_attribute_id = mail_type_model
+			.get_attribute_id_by_attribute_name(BUCKET_KEY_FIELD)
+			.map_err(|err| SessionKeyResolutionError {
+				reason: format!(
+					"{BUCKET_KEY_FIELD} attribute on Mail: {err}",
+				),
+			})?;
+
+		let bucket_key_map =
+			if let Some(ElementValue::Array(bucket_keys)) = mail_parsed.get(&bucket_key_attribute_id) {
+				if let Some(ElementValue::Dict(bucket_key_map)) = bucket_keys.first() {
+					bucket_key_map
+				} else {
+					return Err(SessionKeyResolutionError {
+						reason: format!("{BUCKET_KEY_FIELD} is empty"),
+					});
+				}
+			} else {
+				return Err(SessionKeyResolutionError {
+					reason: format!("Mail has no {BUCKET_KEY_FIELD}"),
+				});
+			};
+
+		let bucket_key: BucketKey =
+			match self.instance_mapper.parse_entity(bucket_key_map.to_owned()) {
+				Ok(n) => n,
+				Err(e) => {
+					return Err(SessionKeyResolutionError {
+						reason: format!("{BUCKET_KEY_FIELD} could not be deserialized: {e}"),
+					})
+				},
+			};
+
+		let owner_key_data =
+			EntityOwnerKeyData::extract_owner_key_data(mail_parsed, mail_type_model)?;
+		let Some(owner_group) = owner_key_data.owner_group else {
+			return Err(SessionKeyResolutionError {
+				reason: "mail has no ownerGroup".to_owned(),
+			});
+		};
+
+		let DecapsulatedAesKey {
+			decrypted_aes_key: decrypted_bucket_key,
+			sender_identity_pub_key,
+		} = if let (Some(key_group), Some(pub_enc_bucket_key)) =
+			(&bucket_key.keyGroup, &bucket_key.pubEncBucketKey)
+		{
+			self.asymmetric_crypto_facade
+				.load_key_pair_and_decrypt_sym_key(
+					key_group,
+					convert_version_to_u64(bucket_key.recipientKeyVersion),
+					&CryptoProtocolVersion::try_from(bucket_key.protocolVersion).unwrap(),
+					pub_enc_bucket_key,
+				)
+				.await?
+		} else if bucket_key.groupEncBucketKey.is_some() {
+			return Err(SessionKeyResolutionError {
+				reason: "secure-external / group-encrypted mail bucket is not supported for attachment session keys in tuta-sdk"
+					.to_string(),
+			});
+		} else {
+			return Err(SessionKeyResolutionError {
+				reason: "encrypted bucket key not set on mail".into(),
+			});
+		};
+
+		// TS `collectAllInstanceSessionKeysAndAuthenticate` / `createOwnerEncSessionKeyProviderForAttachments`
+		// match on element id only (`instanceId`); `instanceList` may not match the file's list id.
+		let keys = bucket_key.bucketEncSessionKeys.as_slice();
+		let matched = keys
+			.iter()
+			.find(|isk| {
+				&isk.instanceList == attachment_list_id && &isk.instanceId == attachment_element_id
+			})
+			.or_else(|| keys.iter().find(|isk| &isk.instanceId == attachment_element_id));
+
+		let Some(isk) = matched else {
+			return Err(SessionKeyResolutionError {
+				reason: "no session key found in mail bucket for this attachment".into(),
+			});
+		};
+
+		let session_key =
+			decrypted_bucket_key.decrypt_aes_key(isk.symEncSessionKey.as_slice())?;
+
+		let versioned_owner_group_key = self
+			.key_loader_facade
+			.get_current_sym_group_key(owner_group)
+			.await?;
+
+		let owner_enc_session_key = versioned_owner_group_key
+			.object
+			.encrypt_key(&session_key, Iv::generate(&self.randomizer_facade));
+		Ok(ResolvedSessionKey {
+			session_key,
+			owner_enc_session_key,
+			owner_key_version: versioned_owner_group_key.version,
+			sender_identity_pub_key,
+		})
+	}
 }
 
 /// Resolves the id field of an entity into a generated id

@@ -1,0 +1,4 @@
+# Overmind sets $PORT per process (5000, 5100, …) unless cleared — that would override MAIL_API_PORT in `.env.mail-api`.
+bridge: bash -lc 'unset PORT; set -a; source ./.env.mail-api; set +a; cargo run -p tuta-mail-api-bridge'
+# Run build/start from the package dir so `node dist/index.js` always resolves under Overmind/tmux (workspace `-w` cwd can vary by npm version).
+api: bash -lc 'unset PORT; set -a; source ./.env.mail-api; set +a; cd packages/tuta-mail-api && npm run build && exec node dist/index.js'

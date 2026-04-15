@@ -1,3 +1,8 @@
+use std::collections::HashMap;
+
+use base64::Engine;
+use crate::util::BASE64_EXT;
+use crate::GeneratedId;
 #[cfg(test)]
 use crate::id::generated_id::GENERATED_ID_BYTES_LENGTH;
 use crypto_primitives::key::GenericAesKey;
@@ -35,6 +40,74 @@ pub struct BlobWrapper {
 
 pub const NEW_BLOB_OVERHEAD_BYTES: usize = BLOB_HASH_BYTES + BLOB_LENGTH_BYTES;
 
+/// Decodes the binary body returned by BlobService GET (multiple blobs), matching
+/// `parseMultipleBlobsResponse` in `BlobFacade.ts`.
+pub fn parse_multiple_blobs_response(
+	concat: &[u8],
+) -> Result<HashMap<GeneratedId, Vec<u8>>, BinaryBlobWrapperSerializationError> {
+	use crate::id::generated_id::GENERATED_ID_BYTES_LENGTH;
+
+	if concat.len() < 4 {
+		return Err(BinaryBlobWrapperSerializationError::InvalidBlobPayload {
+			reason: "truncated header".into(),
+		});
+	}
+	let blob_count = i32::from_be_bytes(concat[0..4].try_into().unwrap());
+	if blob_count < 0 {
+		return Err(BinaryBlobWrapperSerializationError::InvalidBlobPayload {
+			reason: format!("negative blob count: {blob_count}"),
+		});
+	}
+	let expected = blob_count as usize;
+	let mut offset = 4usize;
+	let mut result = HashMap::with_capacity(expected);
+	while offset < concat.len() {
+		if offset + GENERATED_ID_BYTES_LENGTH + BLOB_HASH_BYTES + BLOB_LENGTH_BYTES > concat.len() {
+			return Err(BinaryBlobWrapperSerializationError::InvalidBlobPayload {
+				reason: format!("truncated blob header at offset {offset}"),
+			});
+		}
+		let blob_id_bytes = &concat[offset..offset + GENERATED_ID_BYTES_LENGTH];
+		offset += GENERATED_ID_BYTES_LENGTH;
+		offset += BLOB_HASH_BYTES; // short hash, ignored
+		let data_length = u32::from_be_bytes(
+			concat[offset..offset + BLOB_LENGTH_BYTES]
+				.try_into()
+				.map_err(|_| BinaryBlobWrapperSerializationError::InvalidBlobPayload {
+					reason: "length field".into(),
+				})?,
+		) as usize;
+		offset += BLOB_LENGTH_BYTES;
+		let data_end = offset.checked_add(data_length).ok_or_else(|| {
+			BinaryBlobWrapperSerializationError::InvalidBlobPayload {
+				reason: "size overflow".into(),
+			}
+		})?;
+		if data_end > concat.len() {
+			return Err(BinaryBlobWrapperSerializationError::InvalidBlobPayload {
+				reason: format!("blob size {data_length} exceeds remaining bytes"),
+			});
+		}
+		let id = GeneratedId(BASE64_EXT.encode(blob_id_bytes));
+		result.insert(id, concat[offset..data_end].to_vec());
+		offset = data_end;
+	}
+	if offset != concat.len() {
+		return Err(BinaryBlobWrapperSerializationError::InvalidBlobPayload {
+			reason: format!(
+				"trailing bytes after blobs: {} bytes left",
+				concat.len().saturating_sub(offset)
+			),
+		});
+	}
+	if result.len() != expected {
+		return Err(BinaryBlobWrapperSerializationError::InvalidBlobPayload {
+			reason: format!("parsed {} blobs, header declared {}", result.len(), expected),
+		});
+	}
+	Ok(result)
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub struct NewBlobWrapper {
 	pub(crate) hash: Vec<u8>,
@@ -53,10 +126,12 @@ pub struct SerializedBinaryWrapper {
 	pub(crate) binary: Vec<u8>,
 }
 
-#[derive(Error, Debug, uniffi::Error, Eq, PartialEq, Clone)]
+#[derive(Error, Debug, uniffi::Error, Clone, PartialEq, Eq)]
 pub enum BinaryBlobWrapperSerializationError {
 	#[error("InvalidNumberOfBlobsError: expected: {expected}, actual: {actual}")]
 	InvalidNumberOfBlobsError { expected: u32, actual: u32 },
+	#[error("Invalid blob download payload: {reason}")]
+	InvalidBlobPayload { reason: String },
 }
 
 /// Currently only used in test, but kept here to be used to call
@@ -239,11 +314,12 @@ pub fn serialize_new_blobs_in_binary_chunks(
 #[cfg(test)]
 mod tests {
 	use crate::blobs::binary_blob_wrapper_serializer::{
-		deserialize_blobs, deserialize_new_blobs, serialize_blobs, serialize_new_blobs,
-		serialize_new_blobs_in_binary_chunks, BinaryBlobWrapperSerializationError, BlobWrapper,
-		KeyedNewBlobWrapper, NewBlobWrapper, MAX_NUMBER_OF_BLOBS_IN_BINARY,
+		deserialize_blobs, deserialize_new_blobs, parse_multiple_blobs_response, serialize_blobs,
+		serialize_new_blobs, serialize_new_blobs_in_binary_chunks, BinaryBlobWrapperSerializationError,
+		BlobWrapper, KeyedNewBlobWrapper, NewBlobWrapper, MAX_NUMBER_OF_BLOBS_IN_BINARY,
 	};
 	use crate::tutanota_constants::MAX_BLOB_SERVICE_BYTES;
+	use crate::util::BASE64_EXT;
 	use crate::GeneratedId;
 	use crypto_primitives::key::GenericAesKey;
 	use crypto_primitives::randomizer_facade::test_util::DeterministicRng;
@@ -323,6 +399,32 @@ mod tests {
 			deserialized_blobs,
 			vec![first_blob_wrapper, second_blob_wrapper]
 		);
+	}
+
+	#[test]
+	fn test_parse_multiple_blobs_response_roundtrip_with_serialize_blobs() {
+		let first_blob_data: [u8; 3] = [1, 2, 3];
+		let first_blob_wrapper = BlobWrapper {
+			blob_id: GeneratedId::unencoded_min_id_bytes().to_vec(),
+			hash: vec![1, 2, 3, 4, 5, 6],
+			data: first_blob_data.to_vec(),
+		};
+		let second_blob_data: [u8; 6] = [1, 2, 3, 4, 5, 6];
+		let second_blob_wrapper = BlobWrapper {
+			blob_id: GeneratedId::unencoded_max_id_bytes().to_vec(),
+			hash: vec![4, 5, 6, 2, 3, 5],
+			data: second_blob_data.to_vec(),
+		};
+		let wire = serialize_blobs(vec![
+			first_blob_wrapper.clone(),
+			second_blob_wrapper.clone(),
+		]);
+		let map = parse_multiple_blobs_response(wire.as_slice()).unwrap();
+		let id1 = GeneratedId(BASE64_EXT.encode(first_blob_wrapper.blob_id.as_slice()));
+		let id2 = GeneratedId(BASE64_EXT.encode(second_blob_wrapper.blob_id.as_slice()));
+		assert_eq!(map.len(), 2);
+		assert_eq!(map.get(&id1).unwrap(), &first_blob_wrapper.data);
+		assert_eq!(map.get(&id2).unwrap(), &second_blob_wrapper.data);
 	}
 
 	#[test]

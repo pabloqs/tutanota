@@ -1,0 +1,24 @@
+[package]
+name = "tuta-mail-api-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "tuta-mail-api-bridge"
+path = "src/main.rs"
+
+[dependencies]
+tuta-sdk = { workspace = true, features = ["net", "logging"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = "0.8"
+log = { workspace = true }
+base64 = { workspace = true }
+time = { version = "0.3", features = ["formatting"] }
+
+[lints]
+workspace = true
