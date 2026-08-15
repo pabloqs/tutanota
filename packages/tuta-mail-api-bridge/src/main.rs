@@ -27,7 +27,7 @@ use time::OffsetDateTime;
 use tutasdk::bindings::native_file_client::NativeFileClient;
 use tutasdk::crypto_entity_client::CryptoEntityClient;
 use tutasdk::entities::generated::tutanota::{
-	EncryptedMailAddress, Mail, MailAddress, MailDetails, MailSet, MailSetEntry, TutanotaFile,
+	Body, EncryptedMailAddress, Mail, MailAddress, MailDetails, MailSet, MailSetEntry, TutanotaFile,
 };
 use tutasdk::entities::DateTime;
 use tutasdk::folder_system::{FolderSystem, MailSetKind};
@@ -294,9 +294,25 @@ fn enc_mail_address_json(a: &EncryptedMailAddress) -> Value {
 	json!({ "name": a.name, "address": a.address })
 }
 
+/// Tuta stores the decrypted body in `compressedText` (already lz4-decompressed by the SDK).
+/// `text` is the legacy uncompressed field and is usually empty. Mirrors TS `getMailBodyText`.
+fn mail_body_text(body: &Body) -> String {
+	body.compressedText
+		.as_deref()
+		.filter(|s| !s.is_empty())
+		.or(body.text.as_deref().filter(|s| !s.is_empty()))
+		.unwrap_or("")
+		.to_owned()
+}
+
 fn mail_details_to_raw(d: &MailDetails) -> Value {
 	let headers: Value = match &d.headers {
-		Some(h) => match &h.headers {
+		Some(h) => match h
+			.compressedHeaders
+			.as_deref()
+			.filter(|s| !s.is_empty())
+			.or(h.headers.as_deref().filter(|s| !s.is_empty()))
+		{
 			Some(raw) => {
 				if let Ok(v) = serde_json::from_str::<Value>(raw) {
 					v
@@ -316,7 +332,7 @@ fn mail_details_to_raw(d: &MailDetails) -> Value {
 			"bccRecipients": d.recipients.bccRecipients.iter().map(mail_address_json).collect::<Vec<_>>(),
 		},
 		"replyTos": d.replyTos.iter().map(enc_mail_address_json).collect::<Vec<_>>(),
-		"body": { "text": d.body.text.clone().unwrap_or_default() },
+		"body": { "text": mail_body_text(&d.body) },
 		"headers": headers,
 	})
 }
@@ -727,6 +743,37 @@ mod tests {
 		let id = default_mail_set_entry_start();
 		assert_eq!(id.0.len(), 340);
 		assert!(id.0.chars().all(|c| c == '_'));
+	}
+
+	// ── mail_body_text ──
+
+	fn test_body(text: Option<&str>, compressed: Option<&str>) -> Body {
+		Body {
+			_id: None,
+			text: text.map(str::to_owned),
+			compressedText: compressed.map(str::to_owned),
+			_errors: Default::default(),
+		}
+	}
+
+	#[test]
+	fn mail_body_text_prefers_compressed_text() {
+		assert_eq!(
+			mail_body_text(&test_body(Some("legacy"), Some("<p>html</p>"))),
+			"<p>html</p>"
+		);
+	}
+
+	#[test]
+	fn mail_body_text_falls_back_to_legacy_text() {
+		assert_eq!(mail_body_text(&test_body(Some("plain"), None)), "plain");
+		assert_eq!(mail_body_text(&test_body(Some("plain"), Some(""))), "plain");
+	}
+
+	#[test]
+	fn mail_body_text_empty_when_both_missing() {
+		assert_eq!(mail_body_text(&test_body(None, None)), "");
+		assert_eq!(mail_body_text(&test_body(Some(""), Some(""))), "");
 	}
 
 	// ── datetime_iso ──

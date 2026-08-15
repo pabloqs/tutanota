@@ -124,7 +124,7 @@ See `mail-bridge-deploy-baggy.md` → "Upgrade the live deployment to multi-acco
 
 - [x] `git checkout feat/tuta-mail-bridge-mcp` in `~/src/tutanota`; install MCP workspace deps; rebuild API + bridge; `npm test -w @tutao/tuta-mail-api` (91 pass)
 - [x] Redeploy API app to `/var/lib/tuta-mail-api/app` (`npm install --omit=dev` as `tuta`); restart; `/v1/health` showed `accounts[{id:default}]` then `work`
-- [x] Per account: `ligatica` (`4711`), `prensacr` (`4712`), `jacintocanek` (`4713`) — each with own env, data dir, and `tuta-mail-bridge@<id>`
+- [x] Per account: `ligatica` (`4711`), `prensacr` (`4712`), `jacintocanek` (`4713`), `maquetacion` (`4714`), `articulos` (`4715`) — each with own env, data dir, and `tuta-mail-bridge@<id>`
 - [x] `/etc/tuta-mail-api/accounts.json` (0600 tuta) + `MAIL_API_ACCOUNTS_FILE` in env; drop legacy `TUTA_BRIDGE_*` / `TUTA_MAIL_API_TOKEN` (legacy copies kept as `env.legacy-single`)
 - [x] Swap `tuta-mail-bridge.service` → `tuta-mail-bridge@work`; API `After=`/`Requires=` updated; old unit disabled
 - [x] Validate: `/v1/health` `work` / `http_bridge` / ready; `GET /v1/folders` HTTP 200 + `X-Tuta-Account: work`
