@@ -2,6 +2,7 @@ import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { AccountResolver, McpUserError } from "./accounts.js"
+import { resolveFolderRef } from "./folderResolve.js"
 import { RestClient, RestError } from "./restClient.js"
 import type { HealthAccount, SendMessageRequest } from "./restTypes.js"
 
@@ -109,8 +110,9 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
 		async (args) =>
 			guard(async () => {
 				const account = resolver.resolve(args.account)
+				const folder = await resolveFolderRef(client, account.token, args.folder, { defaultInbox: true })
 				const result = await client.listMessages(account.token, {
-					folder: args.folder,
+					folder,
 					cursor: args.cursor,
 					limit: args.limit,
 					since: args.since,
@@ -253,9 +255,13 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
 		async (args) =>
 			guard(async () => {
 				const account = resolver.resolve(args.account)
+				const targetFolderId = await resolveFolderRef(client, account.token, args.targetFolderId)
+				if (!targetFolderId) {
+					throw new McpUserError("targetFolderId is required")
+				}
 				return jsonResult({
 					account: account.id,
-					result: await client.moveMessage(account.token, args.id, args.targetFolderId, args.idempotencyKey),
+					result: await client.moveMessage(account.token, args.id, targetFolderId, args.idempotencyKey),
 				})
 			}),
 	)

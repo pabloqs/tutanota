@@ -13,6 +13,9 @@ import type {
 } from "../dto/types.js"
 import type { MailService, AttachmentContent } from "./mailService.js"
 import { mapFolderKind, mapMailState, mapReplyType, mapAuthStatus, mapPhishingStatus, mapEmailAddress } from "./mailService.js"
+import { ApiServiceError } from "../errors.js"
+
+const FOLDER_KIND_ALIASES = new Set(["inbox", "sent", "trash", "archive", "spam", "draft", "drafts", "custom", "all"])
 
 /**
  * Tuta SDK wrapper that implements the MailService interface.
@@ -45,7 +48,7 @@ export class TutaMailService implements MailService {
 	async listMessages(query: ListMessagesQuery): Promise<{ data: MessageSummary[]; pagination: Pagination }> {
 		const limit = query.limit ?? 50
 		const rawMails = await this.sdkClient.loadMails({
-			folderId: query.folder,
+			folderId: await this.resolveFolderId(query.folder),
 			cursor: query.cursor,
 			count: limit + 1, // fetch one extra to determine hasMore
 		})
@@ -155,9 +158,29 @@ export class TutaMailService implements MailService {
 	 * SDK calls: MailFacade.simpleMoveMaill()
 	 */
 	async moveMessage(id: string, request: MoveMessageRequest): Promise<MoveMessageResponse | null> {
-		const success = await this.sdkClient.moveMail(id, request.targetFolderId)
+		const targetFolderId = await this.resolveFolderId(request.targetFolderId)
+		if (!targetFolderId) return null
+		const success = await this.sdkClient.moveMail(id, targetFolderId)
 		if (!success) return null
-		return { messageId: id, moved: true, targetFolderId: request.targetFolderId }
+		return { messageId: id, moved: true, targetFolderId }
+	}
+
+	/**
+	 * Accept kind aliases (`inbox`, `sent`, …) in addition to opaque Tuta folder ids.
+	 * The SDK bridge only understands ids; without this, `folder=inbox` becomes
+	 * `Unknown folder id inbox`.
+	 */
+	private async resolveFolderId(folder: string | undefined): Promise<string | undefined> {
+		const raw = folder?.trim()
+		if (!raw) return undefined
+		if (!FOLDER_KIND_ALIASES.has(raw.toLowerCase())) return raw
+		const want = raw.toLowerCase() === "drafts" ? "draft" : raw.toLowerCase()
+		const folders = await this.listFolders()
+		const byKind = folders.find((f) => f.kind === want)
+		if (byKind) return byKind.id
+		const byName = folders.find((f) => f.name.toLowerCase() === raw.toLowerCase() || f.name.toLowerCase() === want)
+		if (byName) return byName.id
+		throw new ApiServiceError("validation_error", 400, `Unknown folder kind/name '${folder}'`)
 	}
 
 	private mapToSummary(raw: RawMail): MessageSummary {

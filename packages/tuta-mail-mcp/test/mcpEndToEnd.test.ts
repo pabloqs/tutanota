@@ -28,7 +28,14 @@ function accountAwareHandler(req: CapturedRequest): FakeResponse {
 		return { status: 401, json: { error: { code: "auth_error", message: "bad token" } } }
 	}
 	if (url.pathname === "/v1/folders") {
-		return { json: { data: [{ id: `${account}-inbox`, name: "Inbox", kind: "inbox" }] } }
+		return {
+			json: {
+				data: [
+					{ id: `${account}-inbox`, name: "Inbox", kind: "inbox" },
+					{ id: `${account}-trash`, name: "Trash", kind: "trash" },
+				],
+			},
+		}
 	}
 	if (url.pathname === "/v1/messages") {
 		return { json: { data: [{ id: `${account}-m1`, subject: `hello ${account}` }], pagination: { limit: 50, nextCursor: null, hasMore: false } } }
@@ -152,6 +159,9 @@ test("list_messages forwards filters and returns account-tagged data", async () 
 		const url = new URL(`http://x${req?.url}`)
 		assert.equal(url.searchParams.get("unread"), "true")
 		assert.equal(url.searchParams.get("limit"), "10")
+		// Kind alias `inbox` (the default) is resolved to the account's real folder id.
+		assert.equal(url.searchParams.get("folder"), "work-inbox")
+		assert.ok(rest.requests.some((r) => r.url === "/v1/folders"))
 	})
 })
 
@@ -202,7 +212,7 @@ test("move_message forwards target folder and idempotency key", async () => {
 			arguments: { account: "work", id: "m1", targetFolderId: "trash", idempotencyKey: "k1" },
 		})) as CallToolResult
 		const body = JSON.parse(textOf(res)) as { result: { targetFolderId: string; moved: boolean } }
-		assert.equal(body.result.targetFolderId, "trash")
+		assert.equal(body.result.targetFolderId, "work-trash")
 		const moveReq = rest.requests.find((r) => r.url === "/v1/messages/m1/move")
 		assert.equal((moveReq?.body as { idempotencyKey: string }).idempotencyKey, "k1")
 	})

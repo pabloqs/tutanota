@@ -138,6 +138,27 @@ test("listFolders maps folderType to kind", async () => {
 	])
 })
 
+test("listMessages: folder kind alias inbox is resolved to the folder id", async () => {
+	const c = new FakeClient()
+	c.folders = [{ id: "f-inbox", name: "Inbox", folderType: 1 }]
+	c.mails = [rawMail({ id: "m1" })]
+	await new TutaMailService(c).listMessages({ folder: "inbox", limit: 10 })
+	assert.deepEqual(c.loadMailsCalls[0].folderId, "f-inbox")
+})
+
+test("listMessages: unknown folder kind yields validation_error", async () => {
+	const c = new FakeClient()
+	c.folders = [{ id: "f-inbox", name: "Inbox", folderType: 1 }]
+	await assert.rejects(
+		() => new TutaMailService(c).listMessages({ folder: "sent" }),
+		(err: Error) => {
+			assert.equal(err.name, "ApiServiceError")
+			assert.match(err.message, /Unknown folder/)
+			return true
+		},
+	)
+})
+
 test("listMessages: passes count = limit + 1 and computes pagination.hasMore + nextCursor", async () => {
 	const c = new FakeClient()
 	c.mails = [rawMail({ id: "a" }), rawMail({ id: "b" }), rawMail({ id: "c" })]
