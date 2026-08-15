@@ -122,19 +122,19 @@ Goal: deploy `tuta-mail-api` + `tuta-mail-api-bridge` on `baggy` with systemd, l
 
 See `mail-bridge-deploy-baggy.md` → "Upgrade the live deployment to multi-account".
 
-- [ ] `git checkout feat/tuta-mail-bridge-mcp` in `~/src/tutanota`; `npm ci`; rebuild API + bridge; `npm test -w @tutao/tuta-mail-api`
-- [ ] Redeploy API app to `/var/lib/tuta-mail-api/app` (`npm ci --omit=dev`); restart; confirm `/v1/health` shows `accounts[]`
-- [ ] Per account: bridge env file (distinct `LISTEN` port + `DATA_DIR`), `tuta-mail-bridge@<id>.service` instance
-- [ ] `/etc/tuta-mail-api/accounts.json` (0600 tuta) + `MAIL_API_ACCOUNTS_FILE` in env; drop legacy `TUTA_BRIDGE_*` / `TUTA_MAIL_API_TOKEN`
-- [ ] Swap `tuta-mail-bridge.service` → `tuta-mail-bridge@<id>` instances; update API `After=`/`Requires=`
-- [ ] Validate: `/v1/health` one `http_bridge` ready entry per account; `X-Tuta-Account` echoed
+- [x] `git checkout feat/tuta-mail-bridge-mcp` in `~/src/tutanota`; install MCP workspace deps; rebuild API + bridge; `npm test -w @tutao/tuta-mail-api` (91 pass)
+- [x] Redeploy API app to `/var/lib/tuta-mail-api/app` (`npm install --omit=dev` as `tuta`); restart; `/v1/health` showed `accounts[{id:default}]` then `work`
+- [x] Per account: `ligatica` (`4711`), `prensacr` (`4712`), `jacintocanek` (`4713`) — each with own env, data dir, and `tuta-mail-bridge@<id>`
+- [x] `/etc/tuta-mail-api/accounts.json` (0600 tuta) + `MAIL_API_ACCOUNTS_FILE` in env; drop legacy `TUTA_BRIDGE_*` / `TUTA_MAIL_API_TOKEN` (legacy copies kept as `env.legacy-single`)
+- [x] Swap `tuta-mail-bridge.service` → `tuta-mail-bridge@work`; API `After=`/`Requires=` updated; old unit disabled
+- [x] Validate: `/v1/health` `work` / `http_bridge` / ready; `GET /v1/folders` HTTP 200 + `X-Tuta-Account: work`
 
 ## 12) Install the MCP server (Claude / Cursor)
 
 See `mail-bridge-deploy-baggy.md` → "MCP server (Claude / Cursor / third-party apps)".
 
-- [ ] `npm run build -w @tutao/tuta-mail-mcp`; `npm test -w @tutao/tuta-mail-mcp`
-- [ ] `/etc/tuta-mail-api/mcp-accounts.json` (0600 tuta) mapping account id → API bearer token
-- [ ] Add `tuta-mail` entry to the MCP host config (`command: node`, `args: [.../tuta-mail-mcp/dist/index.js]`, `MAIL_API_BASE_URL`, `MAIL_API_MCP_ACCOUNTS_FILE`)
-- [ ] Smoke test: pipe an `initialize` JSON-RPC line into `node dist/index.js`; expect a result naming `tuta-mail-mcp`
-- [ ] Confirm tokens are never committed; files stay `0600`, loopback only
+- [x] `npm run build -w @tutao/tuta-mail-mcp`; `npm test -w @tutao/tuta-mail-mcp` (36 pass)
+- [x] `/etc/tuta-mail-api/mcp-accounts.json` mapping `work` + `personal` → API bearer tokens (`0600 pabloq` so the MCP host can read it; dir is `0751 root:tuta`)
+- [x] `~/.cursor/mcp.json` `tuta-mail` entry (`command: node`, `args: [.../tuta-mail-mcp/dist/index.js]`, `MAIL_API_BASE_URL`, `MAIL_API_MCP_ACCOUNTS_FILE`)
+- [x] Smoke test: pipe an `initialize` JSON-RPC line into `node dist/index.js`; result `serverInfo.name=tuta-mail-mcp`, stderr `accounts=work`
+- [x] Tokens not committed; `mcp.json` / `mcp-accounts.json` / `accounts.json` are `0600`; API+bridge loopback-only (ufw does not allow 3100/4711)

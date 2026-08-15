@@ -13,22 +13,27 @@ Cursor, Claude, scripts); n8n runs on the same host and remains one consumer.
 
 ## Live state (re-probed 2026-08-15)
 
-Both services are running the **single-account** setup on the pre-multi-account
-code (branch `feat/tuta-mail-api-bridge-n8n`). Observed:
+Upgraded the same day to **multi-account mode** on `feat/tuta-mail-bridge-mcp`
+@ `0c9cfabd9`. Live accounts: `ligatica` (port 4711; former `work` / n8n token),
+`prensacr` (port 4712; former `personal`), `jacintocanek` (port 4713). MCP is
+installed for the local Cursor host.
 
 | Aspect | Value |
 |---|---|
-| `tuta-mail-api.service` | active — `User=tuta`, `WorkingDirectory=/var/lib/tuta-mail-api/app`, `ExecStart=/usr/bin/node dist/index.js`, `EnvironmentFile=/etc/tuta-mail-api/env`; listening `127.0.0.1:3100` |
-| `tuta-mail-bridge.service` | active — `ExecStart=/usr/local/bin/tuta-mail-api-bridge`, `EnvironmentFile=/etc/tuta-mail-bridge/env`, data `/var/lib/tuta-mail-bridge`; listening `127.0.0.1:4711` |
-| `/v1/health` | `{ status: ok, mail: { kind: http_bridge, mailOperationsReady: true } }` — **no `accounts[]`** (old code) |
-| Repo checkout | `~/src/tutanota` on `feat/tuta-mail-api-bridge-n8n` @ `f60e40b6e` (needs update to `feat/tuta-mail-bridge-mcp`) |
-| Toolchain | Node `v22.23.2`, Rust `1.94.1` — both fine, no reinstall needed |
-| Secrets | `/etc/tuta-mail-api` and `/etc/tuta-mail-bridge` are `0750 tuta` (not world-readable) |
-| n8n | `n8n.service` active (existing consumer of the API) |
+| `tuta-mail-api.service` | active — `User=tuta`, `WorkingDirectory=/var/lib/tuta-mail-api/app`, `ExecStart=/usr/bin/node dist/index.js`, `EnvironmentFile=/etc/tuta-mail-api/env`, `MAIL_API_ACCOUNTS_FILE=/etc/tuta-mail-api/accounts.json`; `After=`/`Requires=` `@ligatica` `@prensacr` `@jacintocanek`; listening `127.0.0.1:3100` |
+| `tuta-mail-bridge@ligatica.service` | active — `EnvironmentFile=/etc/tuta-mail-bridge/ligatica.env`, data `/var/lib/tuta-mail-bridge/ligatica`; listening `127.0.0.1:4711` |
+| `tuta-mail-bridge@prensacr.service` | active — `EnvironmentFile=/etc/tuta-mail-bridge/prensacr.env`, data `/var/lib/tuta-mail-bridge/prensacr`; listening `127.0.0.1:4712` |
+| `tuta-mail-bridge@jacintocanek.service` | active — `EnvironmentFile=/etc/tuta-mail-bridge/jacintocanek.env`, data `/var/lib/tuta-mail-bridge/jacintocanek`; listening `127.0.0.1:4713` |
+| `tuta-mail-bridge.service` | disabled (legacy unit left in place for rollback) |
+| `/v1/health` | `accounts[]` has `ligatica`, `prensacr`, `jacintocanek`, all `http_bridge` / ready. Top-level `mail.kind` is `tuta_unconfigured` (legacy `TUTA_BRIDGE_*` dropped; `accounts[]` is authoritative). `GET /v1/folders` echoes `X-Tuta-Account` per token |
+| MCP | `packages/tuta-mail-mcp` built; `/etc/tuta-mail-api/mcp-accounts.json` (`0600 pabloq`) lists `ligatica` + `prensacr` + `jacintocanek`; Cursor `~/.cursor/mcp.json` → `tuta-mail`. Reload MCP after renaming/adding accounts |
+| Repo checkout | `~/src/tutanota` on `feat/tuta-mail-bridge-mcp` @ `0c9cfabd9` |
+| Toolchain | `/usr/bin/node` `v22.23.2`, Rust `1.94.1` |
+| Secrets | `/etc/tuta-mail-api` and `/etc/tuta-mail-bridge` are `0751 root:tuta` (traverse-only for others, so MCP can open the known `mcp-accounts.json` path). Env/`accounts.json` stay `0600`. Backups: `env.legacy-single` |
+| n8n | `n8n.service` active (same bearer token, now bound to account `ligatica`) |
 
-The upgrade below is **additive and reversible**: the new API code keeps honoring
-the existing single-account env vars, so moving to multi-account / MCP does not
-break the running n8n integration.
+The procedure below remains the reference for adding a fourth account (new slug,
+next free port, own data dir).
 
 ## Discovered host state (probed 2026-04-15)
 
@@ -456,11 +461,13 @@ account), but rebuilding keeps it in sync with the branch.
 ssh baggy '
   sudo rsync -a --delete \
     ~/src/tutanota/packages/tuta-mail-api/dist/ \
+    /var/lib/tuta-mail-api/app/dist/
+  sudo install -m 0644 -o tuta -g tuta \
     ~/src/tutanota/packages/tuta-mail-api/package.json \
-    ~/src/tutanota/packages/tuta-mail-api/package-lock.json \
-    /var/lib/tuta-mail-api/app/
+    /var/lib/tuta-mail-api/app/package.json
   sudo chown -R tuta: /var/lib/tuta-mail-api/app
-  sudo -u tuta bash -c "cd /var/lib/tuta-mail-api/app && npm ci --omit=dev"
+  # package-lock.json may be absent in this workspace; npm install is equivalent.
+  sudo -u tuta bash -c "cd /var/lib/tuta-mail-api/app && /usr/bin/npm install --omit=dev"
 '
 ```
 
