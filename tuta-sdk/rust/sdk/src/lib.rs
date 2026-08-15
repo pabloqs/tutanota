@@ -547,6 +547,36 @@ impl LoggedInSdk {
 		}
 	}
 
+	/// Returns true if any address has no Tuta public key (external / unknown).
+	async fn recipients_contain_external(
+		&self,
+		recipients: &[&SendMailAddressInput],
+	) -> Result<bool, ApiCallError> {
+		for recipient in recipients {
+			let identifier = PublicKeyIdentifier {
+				identifier: recipient.address.clone(),
+				identifier_type: PublicKeyIdentifierType::MailAddress,
+			};
+			match self.public_key_provider.load_current_pub_key(&identifier).await {
+				Ok(_) => {},
+				Err(PublicKeyLoadingError::KeyLoadingError(
+					ApiCallError::ServerResponseError {
+						source: HttpError::NotFoundError,
+					},
+				)) => {
+					return Ok(true);
+				},
+				Err(e) => {
+					return Err(ApiCallError::internal(format!(
+						"send_mail_standard: recipient type probe failed for {}: {e}",
+						recipient.address
+					)));
+				},
+			}
+		}
+		Ok(false)
+	}
+
 	async fn build_internal_recipient_key_data(
 		&self,
 		draft_session_key: &GenericAesKey,
@@ -1015,11 +1045,32 @@ impl LoggedInSdk {
 		let owner_enc_session_key = sender_group_key
 			.object
 			.encrypt_key(&draft_sk, Iv::generate(&randomizer));
-		let confidential_send = input
+		// Match TS `SendMailModel.isConfidential()`:
+		// - all internal (Tuta) recipients → always confidential (E2E)
+		// - any external + password → confidential (secure external)
+		// - any external without password → non-confidential (SMTP)
+		// Previously this incorrectly keyed confidential only on external_password,
+		// so Tuta→Tuta sends created drafts with confidential=false and SendDraftService
+		// returned Internal Server.
+		let has_external_password = input
 			.external_password
 			.as_ref()
 			.map(|s| !s.trim().is_empty())
 			.unwrap_or(false);
+		let all_recipients_for_flags: Vec<&SendMailAddressInput> = input
+			.to
+			.iter()
+			.chain(input.cc.iter())
+			.chain(input.bcc.iter())
+			.collect();
+		let contains_external = self
+			.recipients_contain_external(&all_recipients_for_flags)
+			.await?;
+		let confidential_send = if contains_external {
+			has_external_password
+		} else {
+			true
+		};
 
 		const CONVERSATION_TYPE_NEW: i64 = 0;
 		const MAIL_METHOD_NONE: i64 = 0;
