@@ -143,12 +143,8 @@ export interface TokenRecord {
 	scopes: Scope[]
 	ownerLabel: string
 	status: "active" | "revoked"
+	/** Account this token is bound to (see {@link AccountConfig.id}). Defaults to `"default"` for single-account deployments. */
+	accountId: string
 }
 
-export type Scope =
-	| "mail:read:folders"
-	| "mail:read:messages"
-	| "mail:write"
-	| "mail:send"
-	| "mail:move"
-	| "mail:delete"
+export type Scope = "mail:read:folders" | "mail:read:messages" | "mail:write" | "mail:send" | "mail:move" | "mail:delete"

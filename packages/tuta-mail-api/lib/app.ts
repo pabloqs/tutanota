@@ -1,12 +1,13 @@
 import express, { type Request, type Response } from "express"
 import bodyParser from "body-parser"
 import type { ApiConfig } from "./config/env.js"
-import { getMailBackendMetadata } from "./config/mailBackendMetadata.js"
+import { getAccountBackendMetadata, getMailBackendMetadata } from "./config/mailBackendMetadata.js"
 import type { ErrorEnvelope } from "./dto/types.js"
 import { authMiddleware, requireScope } from "./middleware/auth.js"
 import { rateLimitMiddleware } from "./middleware/rateLimit.js"
 import { requestIdMiddleware } from "./middleware/requestId.js"
 import type { MailService } from "./services/mailService.js"
+import type { MailServiceRegistry } from "./services/factory.js"
 import type { ITokenStore } from "./auth/tokenStore.js"
 import { parseListMessagesQuery, validateMoveMessageRequest, validateSendMessageRequest, validateUpdateMessageRequest, ValidationError } from "./validation.js"
 import { ApiServiceError } from "./errors.js"
@@ -22,20 +23,35 @@ export interface AppStoreOptions {
 	moveIdempotency?: ResponseCache<MoveMessageResponse>
 }
 
-export function createApp(mailService: MailService, tokenStore: ITokenStore, config: ApiConfig, storeOptions?: AppStoreOptions) {
+export function createApp(mail: MailService | MailServiceRegistry, tokenStore: ITokenStore, config: ApiConfig, storeOptions?: AppStoreOptions) {
+	// A bare MailService is treated as a one-account (`default`) registry.
+	const registry: MailServiceRegistry = mail instanceof Map ? mail : new Map([["default", mail]])
 	const app = express()
-	const sendIdempotencyStore =
-		storeOptions?.sendIdempotency ?? new MemoryIdempotencyStore<SendMessageResponse>(config.idempotencyTtlMs)
-	const moveIdempotencyStore =
-		storeOptions?.moveIdempotency ?? new MemoryIdempotencyStore<MoveMessageResponse>(config.idempotencyTtlMs)
+	const sendIdempotencyStore = storeOptions?.sendIdempotency ?? new MemoryIdempotencyStore<SendMessageResponse>(config.idempotencyTtlMs)
+	const moveIdempotencyStore = storeOptions?.moveIdempotency ?? new MemoryIdempotencyStore<MoveMessageResponse>(config.idempotencyTtlMs)
+
+	/** Resolve the authenticated account's mail service and stamp the response with its id. */
+	function serviceFor(req: Request, res: Response): MailService {
+		const accountId = req.accountId ?? "default"
+		const service = registry.get(accountId)
+		if (!service) {
+			throw new ApiServiceError("internal_error", 500, `No mail service configured for account '${accountId}'`)
+		}
+		res.setHeader("X-Tuta-Account", accountId)
+		return service
+	}
+
 	app.disable("x-powered-by")
 	app.use(bodyParser.json({ limit: "10mb" }))
 	app.use(requestIdMiddleware)
 
 	app.get("/v1/health", (_req, res) => {
+		const accounts = (config.accounts ?? []).map(getAccountBackendMetadata)
 		res.status(200).json({
 			status: "ok",
+			// Top-level `mail` mirrors the legacy single-account shape for backward compatibility.
 			mail: getMailBackendMetadata(config),
+			accounts,
 		})
 	})
 
@@ -43,17 +59,20 @@ export function createApp(mailService: MailService, tokenStore: ITokenStore, con
 	app.use(rateLimitMiddleware(config.rateLimitMax, config.rateLimitWindowMs))
 
 	app.get("/v1/folders", requireScope("mail:read:folders"), async (req, res) => {
+		const mailService = serviceFor(req, res)
 		const data = await mailService.listFolders()
 		res.status(200).json({ data })
 	})
 
 	app.get("/v1/messages", requireScope("mail:read:messages"), async (req, res) => {
+		const mailService = serviceFor(req, res)
 		const query = parseListMessagesQuery(req.query as Record<string, unknown>)
 		const result = await mailService.listMessages(query)
 		res.status(200).json(result)
 	})
 
 	app.get("/v1/messages/:id", requireScope("mail:read:messages"), async (req, res) => {
+		const mailService = serviceFor(req, res)
 		const message = await mailService.getMessage(req.params.id)
 		if (!message) {
 			return sendError(res, "validation_error", "Message not found", req.requestId, 404)
@@ -62,6 +81,7 @@ export function createApp(mailService: MailService, tokenStore: ITokenStore, con
 	})
 
 	app.get("/v1/messages/:id/attachments/:attachmentId", requireScope("mail:read:messages"), async (req, res) => {
+		const mailService = serviceFor(req, res)
 		const attachment = await mailService.downloadAttachment(req.params.id, req.params.attachmentId)
 		if (!attachment) {
 			return sendError(res, "validation_error", "Attachment not found", req.requestId, 404)
@@ -76,6 +96,7 @@ export function createApp(mailService: MailService, tokenStore: ITokenStore, con
 	})
 
 	app.patch("/v1/messages/:id", requireScope("mail:write"), async (req, res) => {
+		const mailService = serviceFor(req, res)
 		const payload = validateUpdateMessageRequest(req.body)
 		const result = await mailService.updateMessage(req.params.id, payload.unread)
 		if (!result) {
@@ -85,6 +106,7 @@ export function createApp(mailService: MailService, tokenStore: ITokenStore, con
 	})
 
 	app.delete("/v1/messages/:id", requireScope("mail:delete"), async (req, res) => {
+		const mailService = serviceFor(req, res)
 		const result = await mailService.deleteMessage(req.params.id)
 		if (!result) {
 			return sendError(res, "validation_error", "Message not found", req.requestId, 404)
@@ -93,10 +115,11 @@ export function createApp(mailService: MailService, tokenStore: ITokenStore, con
 	})
 
 	app.post("/v1/messages/send", requireScope("mail:send"), async (req, res) => {
+		const mailService = serviceFor(req, res)
 		const payload = validateSendMessageRequest(req.body)
 		const idempotencyKey = req.header("idempotency-key")
 		if (idempotencyKey) {
-			const scopedKey = `${req.tokenRecord?.tokenId ?? "anon"}:send:${idempotencyKey}`
+			const scopedKey = `${req.accountId ?? "default"}:${req.tokenRecord?.tokenId ?? "anon"}:send:${idempotencyKey}`
 			const existing = sendIdempotencyStore.get(scopedKey)
 			if (existing) {
 				res.status(200).json({ data: existing })
@@ -112,10 +135,11 @@ export function createApp(mailService: MailService, tokenStore: ITokenStore, con
 	})
 
 	app.post("/v1/messages/:id/move", requireScope("mail:move"), async (req, res) => {
+		const mailService = serviceFor(req, res)
 		const payload = validateMoveMessageRequest(req.body)
 		const idempotencyKey = payload.idempotencyKey ?? req.header("idempotency-key")
 		if (idempotencyKey) {
-			const scopedKey = `${req.tokenRecord?.tokenId ?? "anon"}:move:${req.params.id}:${idempotencyKey}`
+			const scopedKey = `${req.accountId ?? "default"}:${req.tokenRecord?.tokenId ?? "anon"}:move:${req.params.id}:${idempotencyKey}`
 			const existing = moveIdempotencyStore.get(scopedKey)
 			if (existing) {
 				res.status(200).json({ data: existing })

@@ -27,6 +27,7 @@ export class TokenStore implements ITokenStore {
 					scopes: record.scopes,
 					ownerLabel: record.ownerLabel,
 					status: record.status,
+					accountId: record.accountId,
 				})
 				return
 			}

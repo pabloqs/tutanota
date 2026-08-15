@@ -48,6 +48,38 @@ The n8n-facing service (`packages/tuta-mail-api`) is **always a standalone Node/
 
 **Bridge quickstart:** `cargo build -p tuta-mail-api-bridge --release` from repo root; see `packages/tuta-mail-api-bridge/README.md` for env vars and current limitations (`moveMail` is trash-only). `downloadAttachment`, mail-id `loadMails` cursors, and `sendMail` are implemented.
 
+### Clients: MCP server (Claude, Cursor) and REST
+
+The REST API is the stable core; third-party apps connect through it in two ways:
+
+- **MCP server** ([`packages/tuta-mail-mcp`](../packages/tuta-mail-mcp)) — an MCP server for hosts like Claude Desktop/Code and Cursor. It exposes the mailbox as tools (`list_folders`, `list_messages`, `get_message`, `send_message`, `move_message`, `download_attachment`, `mark_message`, `delete_message`, plus `list_accounts`) over stdio, wrapping the REST API. **One MCP server manages all accounts**: each tool takes an `account` argument, and the server holds one bearer token per account, preserving the "token → one account" isolation. See its [README](../packages/tuta-mail-mcp/README.md).
+- **Direct REST** — any HTTP client (n8n HTTP nodes, scripts, other services) calls the endpoints below with a per-account bearer token.
+
+### Multi-account support
+
+The service can front **multiple Tuta accounts** (designed for a small, static set of 2–10). The model is:
+
+- **One bridge per account.** Each account has its own `tuta-mail-api-bridge` process (own login, port, SDK cache dir), so accounts are isolated by process, port, and cache. The Rust bridge stays single-account; you run N of them.
+- **Tokens are bound to one account.** Each API token carries an `accountId` ([`TokenRecord.accountId`](../packages/tuta-mail-api/lib/dto/types.ts)); the account is implied by the bearer token. A token can never reach another account's mail, and n8n uses one Header Auth credential per account. There is no request-side account selector.
+- **Accounts config.** Provide `MAIL_API_ACCOUNTS_FILE` (path to a JSON file) or `MAIL_API_ACCOUNTS` (inline JSON). Both accept a bare array or `{ "accounts": [...] }`. Each entry:
+
+  | Field | Required | Notes |
+  |---|---|---|
+  | `id` | yes | Slug `^[a-z0-9][a-z0-9_-]*$`. Appears in `/v1/health` and the `X-Tuta-Account` response header — **never** an email address. |
+  | `serviceMode` | no | `tuta` or `dev`; defaults to `MAIL_API_SERVICE_MODE`. |
+  | `bridgeBaseUrl` | when `tuta` | This account's bridge sidecar URL. |
+  | `bridgeAuthToken` | no | Bearer token sent to that bridge. |
+  | `bridgeTimeoutMs` | no | Defaults to `TUTA_BRIDGE_TIMEOUT_MS`. |
+  | `tutaApiUrl` | no | Health/reporting only. |
+  | `label` | no | Human-readable label for operators. |
+  | `token` | no | Fixed API token registered at bootstrap (with `BOOTSTRAP_TOKEN=true`), bound to this account, long-lived. |
+
+- **Backward compatible.** With neither env var set, a single `default` account is synthesized from the legacy `TUTA_BRIDGE_BASE_URL` / `TUTA_BRIDGE_AUTH_TOKEN` / `TUTA_API_URL` / `TUTA_MAIL_API_TOKEN`. Existing single-account deployments and tokens keep working unchanged.
+- **Health.** `GET /v1/health` returns `accounts: [{ id, label, kind, mailOperationsReady, ... }]` (one per account) plus a top-level `mail` mirroring the `default`/legacy shape.
+- **Persistence.** The SQLite `api_tokens` table gains an `account_id` column; pre-existing databases are migrated in place (rows default to `default`).
+
+Deployment (templated systemd unit per bridge, accounts file, per-account n8n credentials) is in [`n8n-mail-api-deploy-baggy.md`](./n8n-mail-api-deploy-baggy.md) → "Multiple accounts".
+
 ### Local dev runbook (`.env.mail-api` + Overmind + smoke)
 
 This repository includes a practical local run path that starts the Node API and Rust bridge together:

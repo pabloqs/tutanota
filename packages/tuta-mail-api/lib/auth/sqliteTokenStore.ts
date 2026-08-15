@@ -5,7 +5,7 @@ import type { ITokenStore } from "./tokenStore.js"
 
 type SqliteDb = InstanceType<typeof Database>
 
-function rowToRecord(row: {
+interface TokenRow {
 	token_id: string
 	token_hash: string
 	created_at_ms: number
@@ -13,7 +13,10 @@ function rowToRecord(row: {
 	scopes_json: string
 	owner_label: string
 	status: string
-}): TokenRecord {
+	account_id: string
+}
+
+function rowToRecord(row: TokenRow): TokenRecord {
 	return {
 		tokenId: row.token_id,
 		tokenHash: row.token_hash,
@@ -22,6 +25,7 @@ function rowToRecord(row: {
 		scopes: JSON.parse(row.scopes_json) as Scope[],
 		ownerLabel: row.owner_label,
 		status: row.status as TokenRecord["status"],
+		accountId: row.account_id,
 	}
 }
 
@@ -34,20 +38,21 @@ export class SqliteTokenStore implements ITokenStore {
 
 	constructor(private readonly db: SqliteDb) {
 		this.insertStmt = db.prepare(`
-			INSERT INTO api_tokens (token_id, token_hash, created_at_ms, expires_at_ms, scopes_json, owner_label, status)
-			VALUES (@token_id, @token_hash, @created_at_ms, @expires_at_ms, @scopes_json, @owner_label, @status)
+			INSERT INTO api_tokens (token_id, token_hash, created_at_ms, expires_at_ms, scopes_json, owner_label, status, account_id)
+			VALUES (@token_id, @token_hash, @created_at_ms, @expires_at_ms, @scopes_json, @owner_label, @status, @account_id)
 			ON CONFLICT(token_hash) DO UPDATE SET
 				expires_at_ms = excluded.expires_at_ms,
 				scopes_json = excluded.scopes_json,
 				owner_label = excluded.owner_label,
-				status = excluded.status
+				status = excluded.status,
+				account_id = excluded.account_id
 		`)
 		this.selectByHashStmt = db.prepare(`
-			SELECT token_id, token_hash, created_at_ms, expires_at_ms, scopes_json, owner_label, status
+			SELECT token_id, token_hash, created_at_ms, expires_at_ms, scopes_json, owner_label, status, account_id
 			FROM api_tokens WHERE token_hash = ? AND status = 'active'
 		`)
 		this.selectByIdStmt = db.prepare(`
-			SELECT token_id, token_hash, created_at_ms, expires_at_ms, scopes_json, owner_label, status
+			SELECT token_id, token_hash, created_at_ms, expires_at_ms, scopes_json, owner_label, status, account_id
 			FROM api_tokens WHERE token_id = ?
 		`)
 		this.updateRevokeStmt = db.prepare(`UPDATE api_tokens SET status = 'revoked' WHERE token_id = ?`)
@@ -62,22 +67,13 @@ export class SqliteTokenStore implements ITokenStore {
 			scopes_json: JSON.stringify(record.scopes),
 			owner_label: record.ownerLabel,
 			status: record.status,
+			account_id: record.accountId,
 		})
 	}
 
 	findByRawToken(rawToken: string): TokenRecord | null {
 		const candidateHash = hashToken(rawToken)
-		const row = this.selectByHashStmt.get(candidateHash) as
-			| {
-					token_id: string
-					token_hash: string
-					created_at_ms: number
-					expires_at_ms: number
-					scopes_json: string
-					owner_label: string
-					status: string
-			  }
-			| undefined
+		const row = this.selectByHashStmt.get(candidateHash) as TokenRow | undefined
 		if (!row) return null
 		if (!verifyTokenHash(candidateHash, row.token_hash)) return null
 		return rowToRecord(row)
@@ -89,17 +85,7 @@ export class SqliteTokenStore implements ITokenStore {
 	}
 
 	getById(tokenId: string): TokenRecord | null {
-		const row = this.selectByIdStmt.get(tokenId) as
-			| {
-					token_id: string
-					token_hash: string
-					created_at_ms: number
-					expires_at_ms: number
-					scopes_json: string
-					owner_label: string
-					status: string
-			  }
-			| undefined
+		const row = this.selectByIdStmt.get(tokenId) as TokenRow | undefined
 		if (!row) return null
 		return rowToRecord(row)
 	}

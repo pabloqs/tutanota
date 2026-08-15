@@ -154,14 +154,11 @@ test("invoke maps errorCode external_secure_send_unavailable to ApiServiceError 
 		)
 	})
 	try {
-		await assert.rejects(
-			makeClient(baseUrl).sendMail({ to: [{ name: null, address: "x@y.com" }], subject: "s" }),
-			(err: any) => {
-				assert.equal(err.code, "external_secure_send_unavailable")
-				assert.equal(err.status, 422)
-				return true
-			},
-		)
+		await assert.rejects(makeClient(baseUrl).sendMail({ to: [{ name: null, address: "x@y.com" }], subject: "s" }), (err: any) => {
+			assert.equal(err.code, "external_secure_send_unavailable")
+			assert.equal(err.status, 422)
+			return true
+		})
 	} finally {
 		await close(server)
 	}

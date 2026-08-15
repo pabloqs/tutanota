@@ -6,7 +6,7 @@ import type { TokenRecord, Scope } from "../dto/types.js"
  * Returns the raw token string (to be given to the client once)
  * and the hashed form (to be stored).
  */
-export function generateToken(scopes: Scope[], ownerLabel: string, ttlMs: number): { rawToken: string; record: TokenRecord } {
+export function generateToken(scopes: Scope[], ownerLabel: string, ttlMs: number, accountId: string = "default"): { rawToken: string; record: TokenRecord } {
 	const raw = randomBytes(32)
 	const tokenId = randomBytes(16).toString("hex")
 	const rawToken = raw.toString("base64url")
@@ -23,6 +23,7 @@ export function generateToken(scopes: Scope[], ownerLabel: string, ttlMs: number
 			scopes,
 			ownerLabel,
 			status: "active",
+			accountId,
 		},
 	}
 }

@@ -89,7 +89,12 @@ export function validateSendMessageRequest(body: unknown): SendMessageRequest {
 		if (!Array.isArray(payload.attachments)) throw new ValidationError("attachments must be an array")
 		if (payload.attachments.length > 20) throw new ValidationError("attachments exceeds maximum of 20")
 		for (const attachment of payload.attachments) {
-			if (!attachment || !isNonEmptyString(attachment.filename) || !isNonEmptyString(attachment.contentType) || !isNonEmptyString(attachment.contentBase64)) {
+			if (
+				!attachment ||
+				!isNonEmptyString(attachment.filename) ||
+				!isNonEmptyString(attachment.contentType) ||
+				!isNonEmptyString(attachment.contentBase64)
+			) {
 				throw new ValidationError("attachments contain invalid entry")
 			}
 		}

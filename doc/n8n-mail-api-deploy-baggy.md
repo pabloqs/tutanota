@@ -295,6 +295,112 @@ If we later need to call the API from outside the box:
 4. Rotate `TUTA_MAIL_API_TOKEN` on first public exposure (the loopback-only
    token has weaker exposure assumptions).
 
+## Multiple accounts (2–10)
+
+The single-account flow above maps `TUTA_MAIL_API_TOKEN` → one bridge. For
+several accounts, keep **one bridge process per account** (own login, port, and
+SDK cache dir) and describe them to the API in an accounts file. Each API token
+is bound to exactly one account, so n8n gets one Header Auth credential per
+account and the account is implied by the token (no request-side selection).
+
+### 1. Accounts file
+
+Write `/etc/tuta-mail-api/accounts.json` (mode 0600, owner `tuta:tuta`). The
+`id` is a slug (`^[a-z0-9][a-z0-9_-]*$`) — **never** an email address, since it
+appears in `/v1/health` and the `X-Tuta-Account` response header.
+
+```json
+{
+  "accounts": [
+    { "id": "work",     "label": "Work",     "serviceMode": "tuta", "bridgeBaseUrl": "http://127.0.0.1:4711", "bridgeAuthToken": "<BRIDGE_TOKEN_WORK>",     "token": "<API_TOKEN_WORK>" },
+    { "id": "personal", "label": "Personal", "serviceMode": "tuta", "bridgeBaseUrl": "http://127.0.0.1:4712", "bridgeAuthToken": "<BRIDGE_TOKEN_PERSONAL>", "token": "<API_TOKEN_PERSONAL>" }
+  ]
+}
+```
+
+In `/etc/tuta-mail-api/env`, point the API at the file and drop the legacy
+single-account `TUTA_BRIDGE_*` / `TUTA_MAIL_API_TOKEN` lines:
+
+```ini
+MAIL_API_HOST=127.0.0.1
+MAIL_API_PORT=3100
+MAIL_API_SERVICE_MODE=tuta
+MAIL_API_DB_PATH=/var/lib/tuta-mail-api/state.sqlite
+MAIL_API_ACCOUNTS_FILE=/etc/tuta-mail-api/accounts.json
+BOOTSTRAP_TOKEN=true
+```
+
+With `BOOTSTRAP_TOKEN=true`, each account's `token` is registered (bound to that
+account, 10-year TTL); accounts without a `token` get a random 24h token printed
+once at startup.
+
+### 2. One bridge env file per account
+
+`/etc/tuta-mail-bridge/work.env`:
+```ini
+TUTA_MAIL_BRIDGE_API_URL=https://app.tuta.com
+TUTA_MAIL_BRIDGE_MAIL=<work service account>
+TUTA_MAIL_BRIDGE_PASSWORD=<work service password>
+TUTA_MAIL_BRIDGE_DATA_DIR=/var/lib/tuta-mail-bridge/work
+TUTA_MAIL_BRIDGE_LISTEN=127.0.0.1:4711
+TUTA_MAIL_BRIDGE_TOKEN=<BRIDGE_TOKEN_WORK>   # must match bridgeAuthToken for "work"
+```
+
+`/etc/tuta-mail-bridge/personal.env` is identical but with the personal
+credentials, `DATA_DIR=/var/lib/tuta-mail-bridge/personal`, `LISTEN=127.0.0.1:4712`,
+and the personal bridge token. **Each account needs a distinct port and data dir.**
+
+### 3. Templated systemd unit for the bridges
+
+Replace `tuta-mail-bridge.service` with a template instantiated per account.
+`/etc/systemd/system/tuta-mail-bridge@.service`:
+```ini
+[Unit]
+Description=Tuta Mail API Bridge (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tuta
+Group=tuta
+EnvironmentFile=/etc/tuta-mail-bridge/%i.env
+ExecStart=/usr/local/bin/tuta-mail-api-bridge
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/tuta-mail-bridge
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Update `tuta-mail-api.service` to require each instance:
+```ini
+After=tuta-mail-bridge@work.service tuta-mail-bridge@personal.service network-online.target
+Requires=tuta-mail-bridge@work.service tuta-mail-bridge@personal.service
+```
+
+Provision and start:
+```bash
+ssh baggy 'sudo mkdir -p /var/lib/tuta-mail-bridge/work /var/lib/tuta-mail-bridge/personal && sudo chown -R tuta: /var/lib/tuta-mail-bridge'
+ssh baggy 'sudo systemctl daemon-reload && sudo systemctl enable --now tuta-mail-bridge@work tuta-mail-bridge@personal tuta-mail-api'
+```
+
+### 4. Validate + wire n8n
+
+```bash
+ssh baggy 'curl -sf http://127.0.0.1:3100/v1/health | jq ".accounts[] | {id, kind: .kind, ready: .mailOperationsReady}"'
+# expect one entry per account, kind=http_bridge, ready=true
+```
+
+In n8n create one Header Auth credential per account (`Authorization: Bearer
+<API_TOKEN_WORK>`, etc.) and point each workflow at the credential for the
+account it should act on. Responses echo `X-Tuta-Account: <id>` for debugging.
+
 ## Risks / questions to confirm before executing
 
 - [ ] `/` partition is at 77 %. Confirm `/var/lib/tuta-mail-api` lands on the

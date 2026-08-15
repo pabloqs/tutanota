@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Tuta n8n Mail API
-  version: 1.1.0
+  version: 1.2.0
   description: |
     Secure API for n8n automation against Tuta mailbox operations.
     Includes read, send, move, mark read/unread, delete, and attachment download endpoints
@@ -9,6 +9,12 @@ info:
 
     Designed for SMTP/IMAP feature parity: exposes all standard mail headers, authentication
     status, threading metadata, inline attachments, and message state management.
+
+    Multi-account: the service can front several Tuta accounts. Each bearer token is bound to
+    exactly one account (configured via MAIL_API_ACCOUNTS / MAIL_API_ACCOUNTS_FILE), so the
+    account is implied by the token — there is no request-side account parameter. Every
+    response echoes an `X-Tuta-Account` header naming the resolved account id (a slug, never an
+    email). `GET /v1/health` lists all configured accounts under `accounts[]`.
 
 servers:
   - url: https://your-domain.example/api
@@ -69,6 +75,37 @@ paths:
                         type: boolean
                       detail:
                         type: string
+                  accounts:
+                    type: array
+                    description: One entry per configured account (multi-account deployments).
+                    items:
+                      type: object
+                      required:
+                        [id, serviceMode, kind, tutaApiUrl, bridgeBaseUrl, mailOperationsReady, detail]
+                      properties:
+                        id:
+                          type: string
+                          description: Account slug (never an email address).
+                        label:
+                          type: string
+                          nullable: true
+                        serviceMode:
+                          type: string
+                          enum: [dev, tuta]
+                        kind:
+                          type: string
+                          enum: [dev_stub, http_bridge, tuta_unconfigured]
+                        tutaApiUrl:
+                          type: string
+                          format: uri
+                        bridgeBaseUrl:
+                          type: string
+                          nullable: true
+                          format: uri
+                        mailOperationsReady:
+                          type: boolean
+                        detail:
+                          type: string
         "500":
           description: Service unhealthy
           content:

@@ -26,13 +26,9 @@ const cfg: ApiConfig = {
 	tutaBridgeTimeoutMs: 60_000,
 }
 
-type BridgeHandlerResult =
-	| { ok: true; data: unknown }
-	| { ok: false; message: string; errorCode?: string }
+type BridgeHandlerResult = { ok: true; data: unknown } | { ok: false; message: string; errorCode?: string }
 
-async function startBridgeServer(
-	handler: (method: string, params: unknown) => BridgeHandlerResult,
-): Promise<{ server: Server; baseUrl: string }> {
+async function startBridgeServer(handler: (method: string, params: unknown) => BridgeHandlerResult): Promise<{ server: Server; baseUrl: string }> {
 	return await new Promise((resolve) => {
 		const server = createServer((req, res) => {
 			if (req.method !== "POST" || req.url !== "/invoke") {
@@ -61,10 +57,7 @@ async function startBridgeServer(
 	})
 }
 
-async function withServer(
-	tokenScopes: Parameters<typeof generateToken>[0],
-	run: (base: string, headers: Record<string, string>) => Promise<void>,
-) {
+async function withServer(tokenScopes: Parameters<typeof generateToken>[0], run: (base: string, headers: Record<string, string>) => Promise<void>) {
 	const store = new TokenStore()
 	const { rawToken, record } = generateToken(tokenScopes, "test", 60_000)
 	store.add(record)
@@ -286,7 +279,7 @@ test("attachment download enforces max size", async () => {
 	const { rawToken, record } = generateToken(["mail:read:messages"], "test", 60_000)
 	store.add(record)
 	const oversizedService: MailService = {
-		...(new DevMailService()),
+		...new DevMailService(),
 		async downloadAttachment() {
 			return {
 				data: Buffer.alloc(20),
@@ -311,7 +304,7 @@ test("send endpoint honors Idempotency-Key header", async () => {
 	const { rawToken, record } = generateToken(["mail:send"], "test", 60_000)
 	store.add(record)
 	const countingService: MailService = {
-		...(new DevMailService()),
+		...new DevMailService(),
 		async sendMessage(request) {
 			sendCount++
 			return { messageId: `id-${request.subject}`, status: "sent" }
@@ -341,7 +334,7 @@ test("move endpoint honors idempotencyKey in body", async () => {
 	const { rawToken, record } = generateToken(["mail:move"], "test", 60_000)
 	store.add(record)
 	const countingService: MailService = {
-		...(new DevMailService()),
+		...new DevMailService(),
 		async moveMessage(id, request) {
 			moveCount++
 			return { messageId: id, moved: true, targetFolderId: request.targetFolderId }

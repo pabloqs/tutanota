@@ -2,6 +2,13 @@
 
 Rust sidecar that logs into Tuta with **tuta-sdk** and exposes `POST /invoke`, the contract expected by `packages/tuta-mail-api` (`HttpBridgeTutaClient`).
 
+> **One bridge per account.** Each bridge process serves exactly one Tuta login.
+> To serve multiple accounts, run one instance per account, each with its own
+> `TUTA_MAIL_BRIDGE_MAIL`/`PASSWORD`, a distinct `TUTA_MAIL_BRIDGE_LISTEN` port,
+> and a distinct `TUTA_MAIL_BRIDGE_DATA_DIR`. The Node API's accounts config
+> (`MAIL_API_ACCOUNTS` / `MAIL_API_ACCOUNTS_FILE`) points each account at its
+> bridge's URL. See `doc/n8n-mail-api-deploy-baggy.md` → "Multiple accounts".
+
 ## Build
 
 From the monorepo root (Rust toolchain required):

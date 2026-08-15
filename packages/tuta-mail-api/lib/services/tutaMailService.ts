@@ -12,14 +12,7 @@ import type {
 	Pagination,
 } from "../dto/types.js"
 import type { MailService, AttachmentContent } from "./mailService.js"
-import {
-	mapFolderKind,
-	mapMailState,
-	mapReplyType,
-	mapAuthStatus,
-	mapPhishingStatus,
-	mapEmailAddress,
-} from "./mailService.js"
+import { mapFolderKind, mapMailState, mapReplyType, mapAuthStatus, mapPhishingStatus, mapEmailAddress } from "./mailService.js"
 
 /**
  * Tuta SDK wrapper that implements the MailService interface.
@@ -31,9 +24,7 @@ import {
  * Each method documents exactly which SDK calls it wraps.
  */
 export class TutaMailService implements MailService {
-	constructor(
-		private readonly sdkClient: TutaSdkClient,
-	) {}
+	constructor(private readonly sdkClient: TutaSdkClient) {}
 
 	/**
 	 * SDK calls: MailFacade.loadUserMailbox() → MailFacade.loadFoldersForMailbox()

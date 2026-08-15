@@ -1,4 +1,4 @@
-import type { ApiConfig } from "./env.js"
+import type { AccountConfig, ApiConfig } from "./env.js"
 
 /** How this process fulfills mail operations relative to Tuta servers. */
 export type MailBackendKind = "dev_stub" | "http_bridge" | "tuta_unconfigured"
@@ -47,5 +47,52 @@ export function getMailBackendMetadata(config: ApiConfig): MailBackendMetadata {
 		bridgeBaseUrl: null,
 		mailOperationsReady: false,
 		detail: "Set TUTA_BRIDGE_BASE_URL to the SDK sidecar (see HttpBridgeTutaClient), or set MAIL_API_SERVICE_MODE=dev for local testing without Tuta.",
+	}
+}
+
+/** Per-account health/reporting metadata (one entry per configured account). */
+export interface AccountBackendMetadata extends MailBackendMetadata {
+	id: string
+	label: string | null
+}
+
+/**
+ * Describe a single account's mail backend. Mirrors {@link getMailBackendMetadata}
+ * but reads from an {@link AccountConfig} so `/v1/health` can report every account.
+ */
+export function getAccountBackendMetadata(account: AccountConfig): AccountBackendMetadata {
+	if (account.serviceMode === "dev") {
+		return {
+			id: account.id,
+			label: account.label,
+			serviceMode: "dev",
+			kind: "dev_stub",
+			tutaApiUrl: account.tutaApiUrl,
+			bridgeBaseUrl: null,
+			mailOperationsReady: true,
+			detail: "Demo in-memory mailbox only. No traffic to Tuta servers.",
+		}
+	}
+	if (account.bridgeBaseUrl) {
+		return {
+			id: account.id,
+			label: account.label,
+			serviceMode: "tuta",
+			kind: "http_bridge",
+			tutaApiUrl: account.tutaApiUrl,
+			bridgeBaseUrl: account.bridgeBaseUrl,
+			mailOperationsReady: true,
+			detail: "Mail is implemented by this account's HTTP bridge (POST /invoke).",
+		}
+	}
+	return {
+		id: account.id,
+		label: account.label,
+		serviceMode: "tuta",
+		kind: "tuta_unconfigured",
+		tutaApiUrl: account.tutaApiUrl,
+		bridgeBaseUrl: null,
+		mailOperationsReady: false,
+		detail: "Set this account's bridgeBaseUrl to its SDK sidecar, or use serviceMode 'dev' for local testing.",
 	}
 }

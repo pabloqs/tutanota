@@ -4,10 +4,14 @@ import { validateTokenRecord, hasScope } from "../auth/token.js"
 import type { ITokenStore } from "../auth/tokenStore.js"
 
 declare global {
+	// Express request augmentation requires a namespace; ES-module syntax cannot express it.
+	// eslint-disable-next-line @typescript-eslint/no-namespace
 	namespace Express {
 		interface Request {
 			tokenRecord?: TokenRecord
 			requestId?: string
+			/** Account id bound to the authenticated token (see {@link TokenRecord.accountId}). */
+			accountId?: string
 		}
 	}
 }
@@ -43,6 +47,7 @@ export function authMiddleware(tokenStore: ITokenStore) {
 		}
 
 		req.tokenRecord = validation.record
+		req.accountId = validation.record.accountId
 		next()
 	}
 }

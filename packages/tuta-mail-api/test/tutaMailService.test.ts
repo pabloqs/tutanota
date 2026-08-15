@@ -1,21 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {
-	TutaMailService,
-	type RawAttachment,
-	type RawFolder,
-	type RawMail,
-	type RawMailDetails,
-	type TutaSdkClient,
-} from "../lib/services/tutaMailService.js"
-import {
-	mapAuthStatus,
-	mapEmailAddress,
-	mapFolderKind,
-	mapMailState,
-	mapPhishingStatus,
-	mapReplyType,
-} from "../lib/services/mailService.js"
+import { TutaMailService, type RawAttachment, type RawFolder, type RawMail, type RawMailDetails, type TutaSdkClient } from "../lib/services/tutaMailService.js"
+import { mapAuthStatus, mapEmailAddress, mapFolderKind, mapMailState, mapPhishingStatus, mapReplyType } from "../lib/services/mailService.js"
 import type { SendMessageRequest } from "../lib/dto/types.js"
 
 // ── Pure mapping helpers (SMTP parity table) ──
@@ -183,33 +169,48 @@ test("listMessages applies since/before date filters", async () => {
 		before: "2026-05-01T00:00:00.000Z",
 		limit: 50,
 	})
-	assert.deepEqual(out.data.map((m) => m.id), ["mid"])
+	assert.deepEqual(
+		out.data.map((m) => m.id),
+		["mid"],
+	)
 })
 
 test("listMessages applies unread filter true and false", async () => {
 	const c = new FakeClient()
 	c.mails = [rawMail({ id: "r", unread: false }), rawMail({ id: "u", unread: true })]
 	const svc = new TutaMailService(c)
-	assert.deepEqual((await svc.listMessages({ unread: true })).data.map((m) => m.id), ["u"])
-	assert.deepEqual((await svc.listMessages({ unread: false })).data.map((m) => m.id), ["r"])
+	assert.deepEqual(
+		(await svc.listMessages({ unread: true })).data.map((m) => m.id),
+		["u"],
+	)
+	assert.deepEqual(
+		(await svc.listMessages({ unread: false })).data.map((m) => m.id),
+		["r"],
+	)
 })
 
 test("listMessages applies sender substring filter case-insensitively", async () => {
 	const c = new FakeClient()
-	c.mails = [
-		rawMail({ id: "1", sender: { name: "", address: "Bob@Example.com" } }),
-		rawMail({ id: "2", sender: { name: "", address: "carol@example.com" } }),
-	]
+	c.mails = [rawMail({ id: "1", sender: { name: "", address: "Bob@Example.com" } }), rawMail({ id: "2", sender: { name: "", address: "carol@example.com" } })]
 	const out = await new TutaMailService(c).listMessages({ from: "BOB" })
-	assert.deepEqual(out.data.map((m) => m.id), ["1"])
+	assert.deepEqual(
+		out.data.map((m) => m.id),
+		["1"],
+	)
 })
 
 test("listMessages applies hasAttachments filter", async () => {
 	const c = new FakeClient()
 	c.mails = [rawMail({ id: "noatt", attachmentCount: 0 }), rawMail({ id: "att", attachmentCount: 2 })]
 	const svc = new TutaMailService(c)
-	assert.deepEqual((await svc.listMessages({ hasAttachments: true })).data.map((m) => m.id), ["att"])
-	assert.deepEqual((await svc.listMessages({ hasAttachments: false })).data.map((m) => m.id), ["noatt"])
+	assert.deepEqual(
+		(await svc.listMessages({ hasAttachments: true })).data.map((m) => m.id),
+		["att"],
+	)
+	assert.deepEqual(
+		(await svc.listMessages({ hasAttachments: false })).data.map((m) => m.id),
+		["noatt"],
+	)
 })
 
 test("getMessage returns null when mail or details missing", async () => {
