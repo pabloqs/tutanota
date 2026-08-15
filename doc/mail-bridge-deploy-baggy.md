@@ -16,8 +16,9 @@ Cursor, Claude, scripts); n8n runs on the same host and remains one consumer.
 Upgraded the same day to **multi-account mode** on `feat/tuta-mail-bridge-mcp`
 @ `0c9cfabd9`. Live accounts: `ligatica` (port 4711; former `work` / n8n token),
 `prensacr` (port 4712; former `personal`), `jacintocanek` (port 4713),
-`maquetacion` (port 4714; `foxandcrow@tutanota.com`), `articulos` (port 4715;
-`lionandrat@tutanota.com`). MCP is installed for the local Cursor host.
+`maquetacion` (port 4714), `articulos` (port 4715). Each account's Tuta
+service address lives only in its `/etc/tuta-mail-bridge/<id>.env` on the host.
+MCP is installed for the local Cursor host.
 
 | Aspect | Value |
 |---|---|
