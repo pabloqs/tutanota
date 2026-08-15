@@ -36,6 +36,11 @@ export class SqliteTokenStore implements ITokenStore {
 		this.insertStmt = db.prepare(`
 			INSERT INTO api_tokens (token_id, token_hash, created_at_ms, expires_at_ms, scopes_json, owner_label, status)
 			VALUES (@token_id, @token_hash, @created_at_ms, @expires_at_ms, @scopes_json, @owner_label, @status)
+			ON CONFLICT(token_hash) DO UPDATE SET
+				expires_at_ms = excluded.expires_at_ms,
+				scopes_json = excluded.scopes_json,
+				owner_label = excluded.owner_label,
+				status = excluded.status
 		`)
 		this.selectByHashStmt = db.prepare(`
 			SELECT token_id, token_hash, created_at_ms, expires_at_ms, scopes_json, owner_label, status

@@ -18,6 +18,19 @@ export class TokenStore implements ITokenStore {
 	private readonly records: Map<string, TokenRecord> = new Map()
 
 	add(record: TokenRecord): void {
+		// Idempotent for the same token hash (matches SqliteTokenStore ON CONFLICT).
+		for (const [id, existing] of this.records) {
+			if (existing.tokenHash === record.tokenHash) {
+				this.records.set(id, {
+					...existing,
+					expiresAt: record.expiresAt,
+					scopes: record.scopes,
+					ownerLabel: record.ownerLabel,
+					status: record.status,
+				})
+				return
+			}
+		}
 		this.records.set(record.tokenId, record)
 	}
 

@@ -38,16 +38,10 @@ if (config.dbPath) {
 }
 
 if (process.env.BOOTSTRAP_TOKEN === "true") {
-	const scopes = [
-		"mail:read:folders",
-		"mail:read:messages",
-		"mail:write",
-		"mail:send",
-		"mail:move",
-		"mail:delete",
-	] as const
-	const ttlMs = 24 * 60 * 60 * 1000
+	const scopes = ["mail:read:folders", "mail:read:messages", "mail:write", "mail:send", "mail:move", "mail:delete"] as const
+	// Fixed env tokens are long-lived service credentials; random bootstrap tokens stay 24h.
 	const fixedRaw = process.env.TUTA_MAIL_API_TOKEN?.trim()
+	const ttlMs = fixedRaw ? 10 * 365 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000
 	if (fixedRaw) {
 		const now = new Date()
 		const record: TokenRecord = {
@@ -70,7 +64,5 @@ if (process.env.BOOTSTRAP_TOKEN === "true") {
 
 const app = createApp(mailService, tokenStore, config, storeOptions)
 app.listen(config.port, config.host, () => {
-	console.log(
-		`[tuta-mail-api] http://${config.host}:${config.port} | mailBackend=${mailMeta.kind} | tutaApiUrl=${mailMeta.tutaApiUrl}`,
-	)
+	console.log(`[tuta-mail-api] http://${config.host}:${config.port} | mailBackend=${mailMeta.kind} | tutaApiUrl=${mailMeta.tutaApiUrl}`)
 })
