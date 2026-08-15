@@ -93,7 +93,7 @@ Cursor `~/.cursor/mcp.json`):
 ```
 
 The `tuta-mail-api` REST service (and one bridge per account) must be running and
-reachable at `MAIL_API_BASE_URL`; see `doc/n8n-mail-api-deploy-baggy.md`.
+reachable at `MAIL_API_BASE_URL`; see `doc/mail-bridge-deploy-baggy.md`.
 
 ## Tests
 

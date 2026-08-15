@@ -78,7 +78,7 @@ The service can front **multiple Tuta accounts** (designed for a small, static s
 - **Health.** `GET /v1/health` returns `accounts: [{ id, label, kind, mailOperationsReady, ... }]` (one per account) plus a top-level `mail` mirroring the `default`/legacy shape.
 - **Persistence.** The SQLite `api_tokens` table gains an `account_id` column; pre-existing databases are migrated in place (rows default to `default`).
 
-Deployment (templated systemd unit per bridge, accounts file, per-account n8n credentials) is in [`n8n-mail-api-deploy-baggy.md`](./n8n-mail-api-deploy-baggy.md) → "Multiple accounts".
+Deployment (templated systemd unit per bridge, accounts file, per-account n8n credentials) is in [`mail-bridge-deploy-baggy.md`](./mail-bridge-deploy-baggy.md) → "Multiple accounts".
 
 ### Local dev runbook (`.env.mail-api` + Overmind + smoke)
 

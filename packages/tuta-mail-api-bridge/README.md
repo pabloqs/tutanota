@@ -7,7 +7,7 @@ Rust sidecar that logs into Tuta with **tuta-sdk** and exposes `POST /invoke`, t
 > `TUTA_MAIL_BRIDGE_MAIL`/`PASSWORD`, a distinct `TUTA_MAIL_BRIDGE_LISTEN` port,
 > and a distinct `TUTA_MAIL_BRIDGE_DATA_DIR`. The Node API's accounts config
 > (`MAIL_API_ACCOUNTS` / `MAIL_API_ACCOUNTS_FILE`) points each account at its
-> bridge's URL. See `doc/n8n-mail-api-deploy-baggy.md` → "Multiple accounts".
+> bridge's URL. See `doc/mail-bridge-deploy-baggy.md` → "Multiple accounts".
 
 ## Build
 

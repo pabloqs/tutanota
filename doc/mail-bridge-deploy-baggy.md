@@ -1,9 +1,34 @@
-# Deploy `tuta-mail-api` to `baggy` (host: `bagales`, 192.168.0.15)
+# Deploy the Tuta mail bridge to `baggy` (host: `bagales`, 192.168.0.15)
 
-Target: install the n8n mail API as two systemd services on `baggy`, terminate TLS
-with the existing nginx + Let's Encrypt setup, and expose it to the local n8n
-instance over loopback only (no public exposure required, since n8n runs on the
-same host).
+Target: install the Tuta mail API + bridge as systemd services on `baggy`, exposed
+over loopback only. The API is a general REST bridge for third-party apps (n8n,
+Cursor, Claude, scripts); n8n runs on the same host and remains one consumer.
+
+> **Scope of this doc.** Phases 1–9 below describe the original **single-account**
+> install (still valid). For the current setup and the newer modes, jump to:
+> - [Live state (re-probed 2026-08-15)](#live-state-re-probed-2026-08-15)
+> - [Upgrade the live deployment to multi-account](#upgrade-the-live-deployment-to-multi-account)
+> - [Multiple accounts (2–10)](#multiple-accounts-210) — reference config
+> - [MCP server (Claude / Cursor / third-party apps)](#mcp-server-claude--cursor--third-party-apps)
+
+## Live state (re-probed 2026-08-15)
+
+Both services are running the **single-account** setup on the pre-multi-account
+code (branch `feat/tuta-mail-api-bridge-n8n`). Observed:
+
+| Aspect | Value |
+|---|---|
+| `tuta-mail-api.service` | active — `User=tuta`, `WorkingDirectory=/var/lib/tuta-mail-api/app`, `ExecStart=/usr/bin/node dist/index.js`, `EnvironmentFile=/etc/tuta-mail-api/env`; listening `127.0.0.1:3100` |
+| `tuta-mail-bridge.service` | active — `ExecStart=/usr/local/bin/tuta-mail-api-bridge`, `EnvironmentFile=/etc/tuta-mail-bridge/env`, data `/var/lib/tuta-mail-bridge`; listening `127.0.0.1:4711` |
+| `/v1/health` | `{ status: ok, mail: { kind: http_bridge, mailOperationsReady: true } }` — **no `accounts[]`** (old code) |
+| Repo checkout | `~/src/tutanota` on `feat/tuta-mail-api-bridge-n8n` @ `f60e40b6e` (needs update to `feat/tuta-mail-bridge-mcp`) |
+| Toolchain | Node `v22.23.2`, Rust `1.94.1` — both fine, no reinstall needed |
+| Secrets | `/etc/tuta-mail-api` and `/etc/tuta-mail-bridge` are `0750 tuta` (not world-readable) |
+| n8n | `n8n.service` active (existing consumer of the API) |
+
+The upgrade below is **additive and reversible**: the new API code keeps honoring
+the existing single-account env vars, so moving to multi-account / MCP does not
+break the running n8n integration.
 
 ## Discovered host state (probed 2026-04-15)
 
@@ -400,6 +425,166 @@ ssh baggy 'curl -sf http://127.0.0.1:3100/v1/health | jq ".accounts[] | {id, kin
 In n8n create one Header Auth credential per account (`Authorization: Bearer
 <API_TOKEN_WORK>`, etc.) and point each workflow at the credential for the
 account it should act on. Responses echo `X-Tuta-Account: <id>` for debugging.
+
+## Upgrade the live deployment to multi-account
+
+This is the concrete path from the [live single-account state](#live-state-re-probed-2026-08-15)
+to multi-account, on the real paths observed on `baggy`. All steps run as `pabloq`
+with `sudo` where noted; the running n8n integration keeps working throughout.
+
+### A. Update source and rebuild
+
+```bash
+ssh baggy '
+  cd ~/src/tutanota &&
+  git fetch origin &&
+  git checkout feat/tuta-mail-bridge-mcp &&
+  git pull --ff-only &&
+  npm ci &&                                   # root install picks up the new MCP deps
+  npm run build -w @tutao/tuta-mail-api &&
+  npm test  -w @tutao/tuta-mail-api &&
+  . ~/.cargo/env && cargo build -p tuta-mail-api-bridge --release
+'
+```
+
+The bridge binary is unchanged by multi-account (you just run one instance per
+account), but rebuilding keeps it in sync with the branch.
+
+### B. Redeploy the API app
+
+```bash
+ssh baggy '
+  sudo rsync -a --delete \
+    ~/src/tutanota/packages/tuta-mail-api/dist/ \
+    ~/src/tutanota/packages/tuta-mail-api/package.json \
+    ~/src/tutanota/packages/tuta-mail-api/package-lock.json \
+    /var/lib/tuta-mail-api/app/
+  sudo chown -R tuta: /var/lib/tuta-mail-api/app
+  sudo -u tuta bash -c "cd /var/lib/tuta-mail-api/app && npm ci --omit=dev"
+'
+```
+
+At this point the API runs the new code but is **still single-account** (it honors
+the existing `/etc/tuta-mail-api/env`). `sudo systemctl restart tuta-mail-api` and
+confirm `/v1/health` now includes an `accounts[]` array with the `default` account.
+
+### C. Add a second account (example: `work` + `personal`)
+
+1. **Second bridge instance.** Migrate to the templated unit so each account has
+   its own login/port/data dir (see [Multiple accounts](#multiple-accounts-210)
+   for `tuta-mail-bridge@.service`). Keep the current account as `work` on the
+   existing port `4711`, add `personal` on `4712`:
+   ```bash
+   ssh baggy '
+     sudo install -m 0644 /dev/stdin /etc/systemd/system/tuta-mail-bridge@.service < ~/src/tutanota/... # (unit body from Multiple accounts section)
+     sudo mkdir -p /var/lib/tuta-mail-bridge/work /var/lib/tuta-mail-bridge/personal
+     sudo chown -R tuta: /var/lib/tuta-mail-bridge
+   '
+   ```
+   Write `/etc/tuta-mail-bridge/work.env` (reuse the current creds, `LISTEN=127.0.0.1:4711`,
+   `DATA_DIR=/var/lib/tuta-mail-bridge/work`) and `/etc/tuta-mail-bridge/personal.env`
+   (personal creds, `LISTEN=127.0.0.1:4712`, `DATA_DIR=/var/lib/tuta-mail-bridge/personal`).
+
+2. **Accounts file for the API.** Write `/etc/tuta-mail-api/accounts.json`
+   (0600, `tuta:tuta`) with a `bridgeBaseUrl`/`bridgeAuthToken`/`token` per account
+   (schema in [Multiple accounts](#multiple-accounts-210)), then add
+   `MAIL_API_ACCOUNTS_FILE=/etc/tuta-mail-api/accounts.json` to `/etc/tuta-mail-api/env`
+   and drop the legacy `TUTA_BRIDGE_*` / `TUTA_MAIL_API_TOKEN` lines.
+
+3. **Swap units and restart.**
+   ```bash
+   ssh baggy '
+     sudo systemctl disable --now tuta-mail-bridge.service
+     sudo systemctl daemon-reload
+     sudo systemctl enable --now tuta-mail-bridge@work tuta-mail-bridge@personal
+     sudo systemctl restart tuta-mail-api
+     curl -sf http://127.0.0.1:3100/v1/health | jq ".accounts[] | {id, kind, ready: .mailOperationsReady}"
+   '
+   ```
+   Expect one `http_bridge`, `ready:true` entry per account.
+
+4. **Update the API service dependency** so it waits on both bridges: change
+   `tuta-mail-api.service` `After=`/`Requires=` to
+   `tuta-mail-bridge@work.service tuta-mail-bridge@personal.service`, then
+   `daemon-reload`.
+
+> **Staying single-account?** Skip step C. After B the service already runs the new
+> code with the synthesized `default` account and existing token — nothing else to do.
+
+## MCP server (Claude / Cursor / third-party apps)
+
+`packages/tuta-mail-mcp` exposes the mailbox to MCP hosts (Claude Desktop/Code,
+Cursor) as tools. **One MCP server manages all accounts**; each tool takes an
+`account` argument and the server sends that account's bearer token to the REST
+API. It speaks MCP over **stdio**, so the MCP host launches it — it is not a
+systemd service.
+
+### 1. Build
+
+```bash
+ssh baggy 'cd ~/src/tutanota && npm ci && npm run build -w @tutao/tuta-mail-mcp && npm test -w @tutao/tuta-mail-mcp'
+# entrypoint: ~/src/tutanota/packages/tuta-mail-mcp/dist/index.js
+```
+
+### 2. MCP accounts file
+
+Write `/etc/tuta-mail-api/mcp-accounts.json` (0600, `tuta:tuta`) mapping each
+account id to its **API bearer token** (the same tokens minted for the REST API):
+
+```json
+{
+  "accounts": [
+    { "id": "work", "label": "Work", "token": "<API_TOKEN_WORK>" },
+    { "id": "personal", "label": "Personal", "token": "<API_TOKEN_PERSONAL>" }
+  ]
+}
+```
+
+For a single-account server you may instead set `MAIL_API_TOKEN` (+ optional
+`MAIL_API_ACCOUNT_ID`).
+
+### 3. Wire into the MCP host
+
+The host must be able to read the entrypoint and reach the REST API at
+`MAIL_API_BASE_URL`. Add to the host's MCP config (Claude Desktop
+`claude_desktop_config.json`, Cursor `~/.cursor/mcp.json`, or Claude Code
+`.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "tuta-mail": {
+      "command": "node",
+      "args": ["/home/pabloq/src/tutanota/packages/tuta-mail-mcp/dist/index.js"],
+      "env": {
+        "MAIL_API_BASE_URL": "http://127.0.0.1:3100",
+        "MAIL_API_MCP_ACCOUNTS_FILE": "/etc/tuta-mail-api/mcp-accounts.json"
+      }
+    }
+  }
+}
+```
+
+- **Local host on `baggy`** (Claude Code on the box): loopback `http://127.0.0.1:3100`
+  works and the host reads the file directly.
+- **Remote host** (Claude Desktop / Cursor on your laptop): either run the MCP
+  server on `baggy` and reach it over SSH, or expose the REST API to the laptop
+  (see [Phase 10 public exposure](#optional--phase-10-public-exposure-skip-for-v1))
+  and point `MAIL_API_BASE_URL` at that URL. Do not commit real tokens; keep the
+  `mcp-accounts.json` file local with `0600` perms.
+
+### 4. Smoke test the MCP server
+
+```bash
+ssh baggy '
+  cd ~/src/tutanota
+  printf %s \
+   "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"smoke\",\"version\":\"0\"}}}\n" \
+  | MAIL_API_BASE_URL=http://127.0.0.1:3100 MAIL_API_MCP_ACCOUNTS_FILE=/etc/tuta-mail-api/mcp-accounts.json \
+    node packages/tuta-mail-mcp/dist/index.js
+' 2>&1 | head
+# expect a JSON-RPC initialize result naming server "tuta-mail-mcp"; the process then waits on stdin.
+```
 
 ## Risks / questions to confirm before executing
 
