@@ -496,8 +496,11 @@ async fn dispatch(
 				.map_err(|e| BridgeFailure::from(e.to_string()))?;
 			let mut out = Vec::new();
 			for att_id in &mail.attachments {
-				let f: TutanotaFile = crypto
-					.load(att_id)
+				// Attachments on bucket-key mail (external senders/recipients) have no owner
+				// session key of their own; the fallback-aware loader resolves it via the
+				// mail's bucketKey instead of failing outright like a plain `crypto.load` would.
+				let f: TutanotaFile = sdk
+					.load_tutanota_file_for_mail(&mail, att_id)
 					.await
 					.map_err(|e| BridgeFailure::from(e.to_string()))?;
 				let id = f._id.as_ref().map(ToString::to_string).unwrap_or_default();
@@ -539,15 +542,21 @@ async fn dispatch(
 					error_code: None,
 				});
 			}
-			let file: TutanotaFile = crypto.load(&file_tid).await.map_err(|e| BridgeFailure {
-				message: format!("downloadAttachment: load TutanotaFile failed: {e}"),
-				debug: Some(format!(
-					"messageId={message_id} attachmentId={attachment_id} mail.bucketKey.some={} mail.bucketEncSessionKeys.len={}",
-					mail.bucketKey.is_some(),
-					mail.bucketKey.as_ref().map(|b| b.bucketEncSessionKeys.len()).unwrap_or(0),
-				)),
-				error_code: None,
-			})?;
+			// Bucket-key mail (external senders/recipients) leaves the attachment's own owner
+			// session key unset; only the parent mail's bucketKey can resolve it, so load
+			// through the mail-aware fallback rather than a plain `crypto.load`.
+			let file: TutanotaFile = sdk
+				.load_tutanota_file_for_mail(&mail, &file_tid)
+				.await
+				.map_err(|e| BridgeFailure {
+					message: format!("downloadAttachment: load TutanotaFile failed: {e}"),
+					debug: Some(format!(
+						"messageId={message_id} attachmentId={attachment_id} mail.bucketKey.some={} mail.bucketEncSessionKeys.len={}",
+						mail.bucketKey.is_some(),
+						mail.bucketKey.as_ref().map(|b| b.bucketEncSessionKeys.len()).unwrap_or(0),
+					)),
+					error_code: None,
+				})?;
 			let bytes = sdk
 				.download_tutanota_file_attachment_for_mail(&mail, &file)
 				.await

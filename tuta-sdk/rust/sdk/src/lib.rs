@@ -557,7 +557,11 @@ impl LoggedInSdk {
 				identifier: recipient.address.clone(),
 				identifier_type: PublicKeyIdentifierType::MailAddress,
 			};
-			match self.public_key_provider.load_current_pub_key(&identifier).await {
+			match self
+				.public_key_provider
+				.load_current_pub_key(&identifier)
+				.await
+			{
 				Ok(_) => {},
 				Err(PublicKeyLoadingError::KeyLoadingError(
 					ApiCallError::ServerResponseError {
@@ -1404,6 +1408,21 @@ impl LoggedInSdk {
 				file,
 				&resolved.session_key,
 			)
+			.await
+	}
+
+	/// Load and decrypt a mail attachment's `TutanotaFile` metadata, resolving its session key
+	/// via the parent Mail's `bucketKey` when the file has no owner session key of its own
+	/// (external/bucket-key mail). Use this instead of `load::<TutanotaFile>(file_id)` for any
+	/// attachment reached through a `Mail`, since the plain load path cannot fall back to the
+	/// mail's bucket key and fails outright for bucket-keyed attachments.
+	pub async fn load_tutanota_file_for_mail(
+		&self,
+		mail: &Mail,
+		file_id: &IdTupleGenerated,
+	) -> Result<TutanotaFile, ApiCallError> {
+		self.crypto_entity_client
+			.load_tutanota_file_for_mail(mail, file_id)
 			.await
 	}
 

@@ -21,6 +21,7 @@ use crate::entities::Entity;
 use crate::entity_client::EntityClient;
 use crate::id::id_tuple::{BaseIdType, IdType};
 use crate::instance_mapper::InstanceMapper;
+use crate::IdTupleGenerated;
 #[cfg_attr(test, mockall_double::double)]
 use crate::key_loader_facade::KeyLoaderFacade;
 use crate::metamodel::TypeModel;
@@ -202,6 +203,68 @@ impl CryptoEntityClient {
 					file_resolve_note, e
 				))
 			})
+	}
+
+	/// Load and decrypt a mail attachment `TutanotaFile`, resolving its session key via the
+	/// parent Mail's `bucketKey` when the file carries no owner session key of its own
+	/// (external/bucket-key mail — see [`Self::resolve_session_key_for_tutanota_file_with_mail`]).
+	///
+	/// Unlike `load::<TutanotaFile>(file_id)`, this never tries to decrypt the file using a
+	/// plain `resolve_session_key` on the file alone before falling back to the mail's bucket
+	/// key: a `TutanotaFile` cannot exist as a typed struct without already being decrypted, so
+	/// that generic path can never reach the fallback for a bucket-keyed attachment — it always
+	/// fails first with "instance missing owner key/group data". This loads the file's raw
+	/// (still-encrypted) entity, resolves the session key against both the file and the mail,
+	/// and only then decrypts.
+	pub async fn load_tutanota_file_for_mail(
+		&self,
+		mail: &Mail,
+		file_id: &IdTupleGenerated,
+	) -> Result<TutanotaFile, ApiCallError> {
+		let file_type_ref = TutanotaFile::type_ref();
+		let type_model = self.entity_client.resolve_server_type_ref(&file_type_ref)?;
+		let raw_parsed = self.entity_client.load(&file_type_ref, file_id).await?;
+
+		let file_tm = self
+			.entity_client
+			.resolve_client_type_ref(&file_type_ref)?;
+		let file_resolve_note = match self.crypto_facade.resolve_session_key(&raw_parsed, file_tm).await {
+			Ok(Some(k)) => Some(k),
+			Ok(None) => None,
+			Err(_) => None,
+		};
+
+		let resolved = match file_resolve_note {
+			Some(k) => k,
+			None => {
+				let mail_parsed = self.typed_instance_to_parsed(mail.clone())?;
+				let mail_tm = self
+					.entity_client
+					.resolve_client_type_ref(&Mail::type_ref())?;
+				self.crypto_facade
+					.resolve_session_key_for_attachment_from_mail_bucket(
+						&mail_parsed,
+						mail_tm,
+						&file_id.list_id,
+						&file_id.element_id,
+					)
+					.await
+					.map_err(|e| {
+						ApiCallError::internal(format!(
+							"load_tutanota_file_for_mail: resolve_session_key_for_attachment_from_mail_bucket(Mail): {}",
+							e
+						))
+					})?
+			},
+		};
+
+		let decrypted = self
+			.entity_facade
+			.decrypt_and_map(type_model.as_ref(), raw_parsed, resolved)?;
+
+		self.instance_mapper
+			.parse_entity::<TutanotaFile>(decrypted)
+			.map_err(|e| ApiCallError::internal_with_err(e, "parse TutanotaFile"))
 	}
 
 	pub async fn load<T: Entity + DeserializeOwned, ID: IdType>(
