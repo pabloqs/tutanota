@@ -223,43 +223,53 @@ impl CryptoEntityClient {
 		file_id: &IdTupleGenerated,
 	) -> Result<TutanotaFile, ApiCallError> {
 		let file_type_ref = TutanotaFile::type_ref();
+		// `type_model` (server type model) drives decrypt/map; `file_tm` (client type model) is
+		// what the crypto facade needs to resolve a session key — the same split `load_untyped` uses.
 		let type_model = self.entity_client.resolve_server_type_ref(&file_type_ref)?;
 		let raw_parsed = self.entity_client.load(&file_type_ref, file_id).await?;
-
 		let file_tm = self.entity_client.resolve_client_type_ref(&file_type_ref)?;
+
+		// Try the file's own owner session key first. On success decrypt with it directly; on
+		// failure keep the reason as a note so a genuine (non-bucket) error isn't hidden behind
+		// the bucket-fallback message below.
 		let file_resolve_note = match self
 			.crypto_facade
 			.resolve_session_key(&raw_parsed, file_tm)
 			.await
 		{
-			Ok(Some(k)) => Some(k),
-			Ok(None) => None,
-			Err(_) => None,
+			Ok(Some(k)) => {
+				let decrypted =
+					self.entity_facade
+						.decrypt_and_map(type_model.as_ref(), raw_parsed, k)?;
+				return self
+					.instance_mapper
+					.parse_entity::<TutanotaFile>(decrypted)
+					.map_err(|e| ApiCallError::internal_with_err(e, "parse TutanotaFile"));
+			},
+			Ok(None) => "resolve_session_key(TutanotaFile): Ok(None)".to_string(),
+			Err(e) => format!("resolve_session_key(TutanotaFile): {}", e),
 		};
 
-		let resolved = match file_resolve_note {
-			Some(k) => k,
-			None => {
-				let mail_parsed = self.typed_instance_to_parsed(mail.clone())?;
-				let mail_tm = self
-					.entity_client
-					.resolve_client_type_ref(&Mail::type_ref())?;
-				self.crypto_facade
-					.resolve_session_key_for_attachment_from_mail_bucket(
-						&mail_parsed,
-						mail_tm,
-						&file_id.list_id,
-						&file_id.element_id,
-					)
-					.await
-					.map_err(|e| {
-						ApiCallError::internal(format!(
-							"load_tutanota_file_for_mail: resolve_session_key_for_attachment_from_mail_bucket(Mail): {}",
-							e
-						))
-					})?
-			},
-		};
+		// Bucket-key mail: resolve the attachment's session key via the parent mail's bucketKey.
+		let mail_parsed = self.typed_instance_to_parsed(mail.clone())?;
+		let mail_tm = self
+			.entity_client
+			.resolve_client_type_ref(&Mail::type_ref())?;
+		let resolved = self
+			.crypto_facade
+			.resolve_session_key_for_attachment_from_mail_bucket(
+				&mail_parsed,
+				mail_tm,
+				&file_id.list_id,
+				&file_id.element_id,
+			)
+			.await
+			.map_err(|e| {
+				ApiCallError::internal(format!(
+					"load_tutanota_file_for_mail: attachment session key: {}; resolve_session_key_for_attachment_from_mail_bucket(Mail): {}",
+					file_resolve_note, e
+				))
+			})?;
 
 		let decrypted =
 			self.entity_facade
