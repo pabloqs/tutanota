@@ -328,6 +328,7 @@ mod tests {
 	use crate::tutanota_constants::MAX_BLOB_SERVICE_BYTES;
 	use crate::util::BASE64_EXT;
 	use crate::GeneratedId;
+	use base64::Engine;
 	use crypto_primitives::key::GenericAesKey;
 	use crypto_primitives::randomizer_facade::test_util::DeterministicRng;
 	use crypto_primitives::randomizer_facade::RandomizerFacade;

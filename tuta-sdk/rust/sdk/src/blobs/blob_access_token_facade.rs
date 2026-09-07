@@ -25,11 +25,11 @@ pub(crate) struct BlobAccessTokenFacade {
 	service_executor: Arc<ResolvingServiceExecutor>,
 }
 
-#[cfg_attr(test, mockall::automock)]
 fn random_aggregate_custom_id(rf: &RandomizerFacade) -> CustomId {
 	CustomId(BASE64_URL_SAFE_NO_PAD.encode(rf.generate_random_array::<4>()))
 }
 
+#[cfg_attr(test, mockall::automock)]
 impl BlobAccessTokenFacade {
 	pub fn new(
 		randomizer_facade: RandomizerFacade,

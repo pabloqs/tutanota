@@ -5,7 +5,8 @@ use crate::crypto::asymmetric_crypto_facade::AsymmetricCryptoError;
 #[cfg_attr(test, mockall_double::double)]
 use crate::crypto::asymmetric_crypto_facade::AsymmetricCryptoFacade;
 #[cfg_attr(test, mockall_double::double)]
-use crate::crypto::crypto_facade::{CryptoFacade, ResolvedSessionKey};
+use crate::crypto::crypto_facade::CryptoFacade;
+use crate::crypto::crypto_facade::ResolvedSessionKey;
 use crate::crypto::key::AsymmetricKeyPair;
 use crate::crypto::public_key_provider::{PublicKeyIdentifier, PublicKeyLoadingError};
 use crate::crypto::X25519PublicKey;
@@ -21,7 +22,6 @@ use crate::entities::Entity;
 use crate::entity_client::EntityClient;
 use crate::id::id_tuple::{BaseIdType, IdType};
 use crate::instance_mapper::InstanceMapper;
-use crate::IdTupleGenerated;
 #[cfg_attr(test, mockall_double::double)]
 use crate::key_loader_facade::KeyLoaderFacade;
 use crate::metamodel::TypeModel;
@@ -30,6 +30,7 @@ use crate::tutanota_constants::{
 	EncryptionAuthStatus, PublicKeyIdentifierType, SYSTEM_GROUP_MAIL_ADDRESS,
 };
 use crate::util::{convert_version_to_u64, Versioned};
+use crate::IdTupleGenerated;
 use crate::{ApiCallError, ListLoadDirection};
 use crate::{GeneratedId, TypeRef};
 use crypto_primitives::key::GenericAesKey;
@@ -225,10 +226,12 @@ impl CryptoEntityClient {
 		let type_model = self.entity_client.resolve_server_type_ref(&file_type_ref)?;
 		let raw_parsed = self.entity_client.load(&file_type_ref, file_id).await?;
 
-		let file_tm = self
-			.entity_client
-			.resolve_client_type_ref(&file_type_ref)?;
-		let file_resolve_note = match self.crypto_facade.resolve_session_key(&raw_parsed, file_tm).await {
+		let file_tm = self.entity_client.resolve_client_type_ref(&file_type_ref)?;
+		let file_resolve_note = match self
+			.crypto_facade
+			.resolve_session_key(&raw_parsed, file_tm)
+			.await
+		{
 			Ok(Some(k)) => Some(k),
 			Ok(None) => None,
 			Err(_) => None,
@@ -258,9 +261,9 @@ impl CryptoEntityClient {
 			},
 		};
 
-		let decrypted = self
-			.entity_facade
-			.decrypt_and_map(type_model.as_ref(), raw_parsed, resolved)?;
+		let decrypted =
+			self.entity_facade
+				.decrypt_and_map(type_model.as_ref(), raw_parsed, resolved)?;
 
 		self.instance_mapper
 			.parse_entity::<TutanotaFile>(decrypted)

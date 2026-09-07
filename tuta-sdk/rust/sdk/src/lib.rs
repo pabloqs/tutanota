@@ -20,9 +20,8 @@ use crate::crypto::crypto_facade::create_auth_verifier;
 use crate::crypto::crypto_facade::CryptoFacade;
 use crate::crypto::key::VersionedAesKey;
 #[cfg_attr(test, mockall_double::double)]
-use crate::crypto::public_key_provider::{
-	PublicKeyIdentifier, PublicKeyLoadingError, PublicKeyProvider,
-};
+use crate::crypto::public_key_provider::PublicKeyProvider;
+use crate::crypto::public_key_provider::{PublicKeyIdentifier, PublicKeyLoadingError};
 #[cfg_attr(test, mockall_double::double)]
 use crate::crypto_entity_client::CryptoEntityClient;
 use crate::date::date_provider::SystemDateProvider;
