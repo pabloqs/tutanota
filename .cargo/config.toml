@@ -3,3 +3,11 @@ rustflags = ["-C", "target-feature=+crt-static"]
 
 [profile.release]
 lto = true
+
+[env]
+# Pin the timezone so tests that assert against calendar occurrence boundaries
+# are deterministic regardless of the developer's local timezone. CI runs in
+# UTC; without this, e.g. calendar_facade's repeating-event test fails under a
+# negative-offset local zone (the daily events sit on UTC-midnight window edges).
+# `force = true` overrides a TZ already exported in the developer's shell.
+TZ = { value = "UTC", force = true }
