@@ -11,33 +11,43 @@ Cursor, Claude, scripts); n8n runs on the same host and remains one consumer.
 > - [Multiple accounts (2–10)](#multiple-accounts-210) — reference config
 > - [MCP server (Claude / Cursor / third-party apps)](#mcp-server-claude--cursor--third-party-apps)
 
-## Live state (re-probed 2026-08-15)
+## Live state (re-probed 2026-09-07)
 
-Upgraded the same day to **multi-account mode** on `feat/tuta-mail-bridge-mcp`
-@ `0c9cfabd9`. Live accounts: `ligatica` (port 4711; former `work` / n8n token),
-`prensacr` (port 4712; former `personal`), `jacintocanek` (port 4713),
-`maquetacion` (port 4714), `articulos` (port 4715). Each account's Tuta
-service address lives only in its `/etc/tuta-mail-bridge/<id>.env` on the host.
-MCP is installed for the local Cursor host.
+Multi-account mode on `feat/tuta-mail-bridge-mcp`. Live accounts: `ligatica`
+(port 4711; former `work` / n8n token), `prensacr` (port 4712; former
+`personal`), `jacintocanek` (port 4713), `maquetacion` (port 4714), `articulos`
+(port 4715), `articulos-espanol` (port 4716; added 2026-09-07). Each account's
+Tuta service address lives only in its `/etc/tuta-mail-bridge/<id>.env` on the
+host. MCP is installed for the local Cursor host.
+
+> ⚠ **The API actually listens on `0.0.0.0:3101`, not the `127.0.0.1:3100` the
+> deploy plan below prescribes.** `/etc/tuta-mail-api/env` on the box has
+> `MAIL_API_HOST=0.0.0.0` and `MAIL_API_PORT=3101`. Binding all interfaces means
+> the "loopback-only, skip TLS" assumption no longer holds on its own — the
+> mail API is reachable from the LAN unless `ufw` blocks 3101. Verify the
+> firewall (`sudo ufw status verbose`), or set `MAIL_API_HOST=127.0.0.1` to
+> restore loopback-only. All commands in this doc use `3101`.
 
 | Aspect | Value |
 |---|---|
-| `tuta-mail-api.service` | active — `User=tuta`, `WorkingDirectory=/var/lib/tuta-mail-api/app`, `ExecStart=/usr/bin/node dist/index.js`, `EnvironmentFile=/etc/tuta-mail-api/env`, `MAIL_API_ACCOUNTS_FILE=/etc/tuta-mail-api/accounts.json`; `After=`/`Requires=` `@ligatica` `@prensacr` `@jacintocanek` `@maquetacion` `@articulos`; listening `127.0.0.1:3100` |
+| `tuta-mail-api.service` | active — `User=tuta`, `WorkingDirectory=/var/lib/tuta-mail-api/app`, `ExecStart=/usr/bin/node dist/index.js`, `EnvironmentFile=/etc/tuta-mail-api/env`, `MAIL_API_ACCOUNTS_FILE=/etc/tuta-mail-api/accounts.json`; `After=`/`Requires=` `@ligatica` `@prensacr` `@jacintocanek` `@maquetacion` `@articulos` `@articulos-espanol`; **listening `0.0.0.0:3101`** (`MAIL_API_HOST=0.0.0.0`, `MAIL_API_PORT=3101`) |
 | `tuta-mail-bridge@ligatica.service` | active — `EnvironmentFile=/etc/tuta-mail-bridge/ligatica.env`, data `/var/lib/tuta-mail-bridge/ligatica`; listening `127.0.0.1:4711` |
 | `tuta-mail-bridge@prensacr.service` | active — `EnvironmentFile=/etc/tuta-mail-bridge/prensacr.env`, data `/var/lib/tuta-mail-bridge/prensacr`; listening `127.0.0.1:4712` |
 | `tuta-mail-bridge@jacintocanek.service` | active — `EnvironmentFile=/etc/tuta-mail-bridge/jacintocanek.env`, data `/var/lib/tuta-mail-bridge/jacintocanek`; listening `127.0.0.1:4713` |
 | `tuta-mail-bridge@maquetacion.service` | active — `EnvironmentFile=/etc/tuta-mail-bridge/maquetacion.env`, data `/var/lib/tuta-mail-bridge/maquetacion`; listening `127.0.0.1:4714` |
 | `tuta-mail-bridge@articulos.service` | active — `EnvironmentFile=/etc/tuta-mail-bridge/articulos.env`, data `/var/lib/tuta-mail-bridge/articulos`; listening `127.0.0.1:4715` |
+| `tuta-mail-bridge@articulos-espanol.service` | active — `EnvironmentFile=/etc/tuta-mail-bridge/articulos-espanol.env`, data `/var/lib/tuta-mail-bridge/articulos-espanol`; listening `127.0.0.1:4716` |
 | `tuta-mail-bridge.service` | disabled (legacy unit left in place for rollback) |
-| `/v1/health` | `accounts[]` has `ligatica`, `prensacr`, `jacintocanek`, `maquetacion`, `articulos`, all `http_bridge` / ready. Top-level `mail.kind` is `tuta_unconfigured` (legacy `TUTA_BRIDGE_*` dropped; `accounts[]` is authoritative). `GET /v1/folders` echoes `X-Tuta-Account` per token |
-| MCP | `packages/tuta-mail-mcp` built; `/etc/tuta-mail-api/mcp-accounts.json` (`0600 pabloq`) lists all five accounts; Cursor `~/.cursor/mcp.json` → `tuta-mail`. Reload MCP after renaming/adding accounts |
-| Repo checkout | `~/src/tutanota` on `feat/tuta-mail-bridge-mcp` @ `0c9cfabd9` |
+| `/v1/health` | `accounts[]` has `ligatica`, `prensacr`, `jacintocanek`, `maquetacion`, `articulos`, `articulos-espanol`, all `http_bridge` / ready. Top-level `mail.kind` is `tuta_unconfigured` (legacy `TUTA_BRIDGE_*` dropped; `accounts[]` is authoritative). `GET /v1/folders` echoes `X-Tuta-Account` per token |
+| MCP | `packages/tuta-mail-mcp` built; `/etc/tuta-mail-api/mcp-accounts.json` (`0600 pabloq`) lists all six accounts; Cursor `~/.cursor/mcp.json` → `tuta-mail`. Reload MCP after renaming/adding accounts |
+| Repo checkout | `~/src/tutanota` on `feat/tuta-mail-bridge-mcp` |
 | Toolchain | `/usr/bin/node` `v22.23.2`, Rust `1.94.1` |
 | Secrets | `/etc/tuta-mail-api` and `/etc/tuta-mail-bridge` are `0751 root:tuta` (traverse-only for others, so MCP can open the known `mcp-accounts.json` path). Env/`accounts.json` stay `0600`. Backups: `env.legacy-single` |
 | n8n | `n8n.service` active (same bearer token, now bound to account `ligatica`) |
 
-The procedure below remains the reference for adding another account (new slug,
-next free port, own data dir).
+To add another account, follow
+[Add another account to the live setup](#add-another-account-to-the-live-setup)
+(new slug, next free port, own data dir).
 
 ## Discovered host state (probed 2026-04-15)
 
@@ -67,7 +77,7 @@ next free port, own data dir).
   for runtime data; build the Rust bridge under `$HOME` so target/ stays on
   `/home`.
 - **n8n is already on the box** — no need for a public hostname. Bind the
-  mail API to `127.0.0.1:3100` and have n8n call `http://127.0.0.1:3100`. This
+  mail API to `127.0.0.1:3101` and have n8n call `http://127.0.0.1:3101`. This
   means we can **skip TLS / nginx / Let's Encrypt entirely for v1**. (Optional
   Phase 6 below adds a public hostname if remote access is later needed.)
 - **No new Linux user needed** if we run as `pabloq` for v1. For better
@@ -186,7 +196,7 @@ echo "$API_TOKEN"   # save into n8n credentials manager
 Write `/etc/tuta-mail-api/env` (mode 0600, owner `tuta:tuta`):
 ```ini
 MAIL_API_HOST=127.0.0.1
-MAIL_API_PORT=3100
+MAIL_API_PORT=3101
 MAIL_API_SERVICE_MODE=tuta
 MAIL_API_DB_PATH=/var/lib/tuta-mail-api/state.sqlite
 TUTA_BRIDGE_BASE_URL=http://127.0.0.1:4711
@@ -278,19 +288,19 @@ ssh baggy 'sudo systemctl status tuta-mail-bridge tuta-mail-api --no-pager'
 ### Phase 7 — smoke test (loopback)
 
 ```bash
-ssh baggy 'curl -sf http://127.0.0.1:3100/v1/health | jq .mail'
+ssh baggy 'curl -sf http://127.0.0.1:3101/v1/health | jq .mail'
 # expect: kind=http_bridge, mailOperationsReady=true
 
 ssh baggy 'set -a; source /etc/tuta-mail-api/env; set +a;
            curl -sf -H "Authorization: Bearer $TUTA_MAIL_API_TOKEN" \
-                http://127.0.0.1:3100/v1/folders | jq'
+                http://127.0.0.1:3101/v1/folders | jq'
 ```
 
 Then run the existing REST smoke test against loopback:
 ```bash
 ssh baggy '
   cd ~/src/tutanota/packages/tuta-mail-api &&
-  TUTA_MAIL_API_BASE=http://127.0.0.1:3100 \
+  TUTA_MAIL_API_BASE=http://127.0.0.1:3101 \
   TUTA_MAIL_API_TOKEN=$(grep ^TUTA_MAIL_API_TOKEN= /etc/tuta-mail-api/env | cut -d= -f2-) \
     bash scripts/rest-smoke-test.sh
 '
@@ -301,7 +311,7 @@ ssh baggy '
 In the n8n UI (`https://n8n.bagales.freeddns.org`):
 1. Settings → Credentials → New "Header Auth": name `tuta-mail-api`,
    header `Authorization`, value `Bearer <API_TOKEN>`.
-2. Use HTTP Request nodes targeting `http://127.0.0.1:3100/v1/...` with that
+2. Use HTTP Request nodes targeting `http://127.0.0.1:3101/v1/...` with that
    credential. (n8n runs on the same host; loopback works.)
 
 ### Phase 9 — observability
@@ -311,7 +321,7 @@ In the n8n UI (`https://n8n.bagales.freeddns.org`):
 ssh baggy 'journalctl -u tuta-mail-api -u tuta-mail-bridge -f'
 
 # Health probe via cron / uptime-kuma every minute
-* * * * * curl -sf http://127.0.0.1:3100/v1/health > /dev/null || logger -t tuta-mail-api "health probe failed"
+* * * * * curl -sf http://127.0.0.1:3101/v1/health > /dev/null || logger -t tuta-mail-api "health probe failed"
 ```
 
 Logrotate is automatic via journald.
@@ -321,10 +331,10 @@ Logrotate is automatic via journald.
 If we later need to call the API from outside the box:
 
 1. Add a new nginx vhost `mail-api.bagales.freeddns.org` reverse-proxying to
-   `127.0.0.1:3100` (mirror the existing `n8n.bagales.freeddns.org` config).
+   `127.0.0.1:3101` (mirror the existing `n8n.bagales.freeddns.org` config).
 2. Issue cert: `sudo certbot --nginx -d mail-api.bagales.freeddns.org`.
 3. Tighten firewall: `sudo ufw status` first, then ensure 443 is allowed and
-   3100 is **not** publicly reachable. Optional IP allowlist in nginx for known
+   3101 is **not** publicly reachable. Optional IP allowlist in nginx for known
    n8n / monitoring sources.
 4. Rotate `TUTA_MAIL_API_TOKEN` on first public exposure (the loopback-only
    token has weaker exposure assumptions).
@@ -357,7 +367,7 @@ single-account `TUTA_BRIDGE_*` / `TUTA_MAIL_API_TOKEN` lines:
 
 ```ini
 MAIL_API_HOST=127.0.0.1
-MAIL_API_PORT=3100
+MAIL_API_PORT=3101
 MAIL_API_SERVICE_MODE=tuta
 MAIL_API_DB_PATH=/var/lib/tuta-mail-api/state.sqlite
 MAIL_API_ACCOUNTS_FILE=/etc/tuta-mail-api/accounts.json
@@ -427,7 +437,7 @@ ssh baggy 'sudo systemctl daemon-reload && sudo systemctl enable --now tuta-mail
 ### 4. Validate + wire n8n
 
 ```bash
-ssh baggy 'curl -sf http://127.0.0.1:3100/v1/health | jq ".accounts[] | {id, kind: .kind, ready: .mailOperationsReady}"'
+ssh baggy 'curl -sf http://127.0.0.1:3101/v1/health | jq ".accounts[] | {id, kind: .kind, ready: .mailOperationsReady}"'
 # expect one entry per account, kind=http_bridge, ready=true
 ```
 
@@ -509,7 +519,7 @@ confirm `/v1/health` now includes an `accounts[]` array with the `default` accou
      sudo systemctl daemon-reload
      sudo systemctl enable --now tuta-mail-bridge@work tuta-mail-bridge@personal
      sudo systemctl restart tuta-mail-api
-     curl -sf http://127.0.0.1:3100/v1/health | jq ".accounts[] | {id, kind, ready: .mailOperationsReady}"
+     curl -sf http://127.0.0.1:3101/v1/health | jq ".accounts[] | {id, kind, ready: .mailOperationsReady}"
    '
    ```
    Expect one `http_bridge`, `ready:true` entry per account.
@@ -521,6 +531,123 @@ confirm `/v1/health` now includes an `accounts[]` array with the `default` accou
 
 > **Staying single-account?** Skip step C. After B the service already runs the new
 > code with the synthesized `default` account and existing token — nothing else to do.
+
+## Add another account to the live setup
+
+Use this once the box is **already** multi-account (the state above) and you just
+want to add one more mailbox. It's fully additive: existing accounts and the n8n
+integration keep working; only `tuta-mail-api` is restarted (a brief bounce) so it
+picks up the new token. The worked example reproduces the `articulos-espanol`
+addition done on 2026-09-07 (port `4716`); for a real new account substitute your
+own slug and the next free port (`4717+` — the guard aborts on a taken port/slug).
+
+**Conventions**
+
+- **Slug** matches `^[a-z0-9][a-z0-9_-]*$` and is **never** an email (it appears in
+  `/v1/health` and the `X-Tuta-Account` header).
+- **Port** is the next free one after the highest in use (live: 4711–4716 taken,
+  so the next is 4717). Verify: `ssh baggy 'ss -ltn | grep 47'`.
+- Each account gets **two independent tokens** (bridge auth + API bearer), its own
+  bridge env, data dir, and templated systemd instance.
+
+**1. Generate the two tokens on the box** (so they never leave it), write the bridge
+env with a placeholder password, create the data dir, and merge both account files
+— all in one pass (backs up every file it edits as `*.bak-<ts>`):
+
+```bash
+ssh baggy 'bash -s' <<'PROVISION'
+set -euo pipefail
+ID="articulos-espanol"; LABEL="Artículos Español"
+EMAIL="you@tutamail.com"; PORT="4716"
+ENVFILE="/etc/tuta-mail-bridge/${ID}.env"
+DATADIR="/var/lib/tuta-mail-bridge/${ID}"
+ACCOUNTS="/etc/tuta-mail-api/accounts.json"; MCP="/etc/tuta-mail-api/mcp-accounts.json"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+
+sudo -n jq -e --arg id "$ID" '.accounts[]|select(.id==$id)' "$ACCOUNTS" >/dev/null 2>&1 \
+  && { echo "id already present — abort"; exit 1; }
+ss -ltn | grep -q "127.0.0.1:${PORT}\b" && { echo "port in use — abort"; exit 1; }
+
+BRIDGE_TOKEN="$(openssl rand -base64 32)"; API_TOKEN="$(openssl rand -base64 32)"
+
+tmp="$(mktemp)"; cat > "$tmp" <<EOF
+TUTA_MAIL_BRIDGE_API_URL=https://app.tuta.com
+TUTA_MAIL_BRIDGE_MAIL=${EMAIL}
+TUTA_MAIL_BRIDGE_PASSWORD=__FILL_PASSWORD__
+TUTA_MAIL_BRIDGE_DATA_DIR=${DATADIR}
+TUTA_MAIL_BRIDGE_LISTEN=127.0.0.1:${PORT}
+TUTA_MAIL_BRIDGE_TOKEN=${BRIDGE_TOKEN}
+EOF
+sudo -n install -m 0600 -o tuta -g tuta "$tmp" "$ENVFILE"; rm -f "$tmp"
+sudo -n mkdir -p "$DATADIR"; sudo -n chown -R tuta: "$DATADIR"
+
+sudo -n cp -a "$ACCOUNTS" "${ACCOUNTS}.bak-${STAMP}"; a="$(mktemp)"
+sudo -n jq --arg id "$ID" --arg label "$LABEL" --arg url "http://127.0.0.1:${PORT}" \
+  --arg bt "$BRIDGE_TOKEN" --arg tok "$API_TOKEN" \
+  '.accounts += [{id:$id,label:$label,serviceMode:"tuta",bridgeBaseUrl:$url,bridgeAuthToken:$bt,token:$tok}]' \
+  "$ACCOUNTS" > "$a"; sudo -n install -m 0600 -o tuta -g tuta "$a" "$ACCOUNTS"; rm -f "$a"
+
+o="$(sudo -n stat -c '%U:%G' "$MCP")"; sudo -n cp -a "$MCP" "${MCP}.bak-${STAMP}"; m="$(mktemp)"
+sudo -n jq --arg id "$ID" --arg label "$LABEL" --arg tok "$API_TOKEN" \
+  '.accounts += [{id:$id,label:$label,token:$tok}]' "$MCP" > "$m"
+sudo -n install -m 0600 -o "${o%%:*}" -g "${o##*:}" "$m" "$MCP"; rm -f "$m"
+echo "provisioned $ID (password still a placeholder)"
+PROVISION
+```
+
+**2. Add the bridge dependency to the API unit** (so it starts/stops with the API),
+then `daemon-reload`:
+
+```bash
+ssh baggy '
+  U=/etc/systemd/system/tuta-mail-api.service; ID=articulos-espanol
+  sudo cp -a "$U" "$U.bak-$(date +%Y%m%d-%H%M%S)"
+  grep -q "tuta-mail-bridge@$ID.service" "$U" || {
+    sudo sed -i -E "s|(After=.*)( network-online.target)|\1 tuta-mail-bridge@$ID.service\2|" "$U"
+    sudo sed -i -E "s|^(Requires=.*)$|\1 tuta-mail-bridge@$ID.service|" "$U"
+  }
+  sudo systemctl daemon-reload
+'
+```
+
+**3. Set the password** (only you can). `sudoedit` keeps perms and never puts it in
+shell history; replace `__FILL_PASSWORD__`:
+
+```bash
+ssh -t baggy 'sudo -e /etc/tuta-mail-bridge/articulos-espanol.env'
+ssh baggy 'sudo grep -c __FILL_PASSWORD__ /etc/tuta-mail-bridge/articulos-espanol.env'  # expect 0
+```
+
+**4. Start the bridge and restart the API**, then validate (note port **3101**):
+
+```bash
+ssh baggy '
+  sudo systemctl enable --now tuta-mail-bridge@articulos-espanol
+  sudo systemctl restart tuta-mail-api
+  curl -s http://127.0.0.1:3101/v1/health \
+    | jq ".accounts[] | select(.id==\"articulos-espanol\") | {id, kind, ready: .mailOperationsReady}"
+'
+# expect: kind=http_bridge, ready=true
+```
+
+Authenticated smoke test (pulls the token from accounts.json, does not print it):
+
+```bash
+ssh baggy '
+  TOK=$(sudo -n jq -r ".accounts[]|select(.id==\"articulos-espanol\").token" /etc/tuta-mail-api/accounts.json)
+  curl -s -H "Authorization: Bearer $TOK" http://127.0.0.1:3101/v1/folders | jq "length"
+'
+```
+
+**5. Wire consumers.** For n8n, add a Header Auth credential `Authorization: Bearer
+<API_TOKEN>` for the new account. For MCP hosts, append the account to the host's
+`mcp-accounts.json` with the **same API token** and reload the host (see below).
+On the box, the API's `mcp-accounts.json` was already updated in step 1; a laptop
+host keeps its own copy — e.g. `~/.config/tuta-mail/mcp-accounts.json`.
+
+**Invariants** (easy to get wrong): unique slug/port/data-dir/token-pair;
+`bridgeAuthToken` in `accounts.json` **==** `TUTA_MAIL_BRIDGE_TOKEN` in the bridge
+env; the **same** API token in both `accounts.json` and every `mcp-accounts.json`.
 
 ## MCP server (Claude / Cursor / third-party apps)
 
@@ -568,7 +695,7 @@ The host must be able to read the entrypoint and reach the REST API at
       "command": "node",
       "args": ["/home/pabloq/src/tutanota/packages/tuta-mail-mcp/dist/index.js"],
       "env": {
-        "MAIL_API_BASE_URL": "http://127.0.0.1:3100",
+        "MAIL_API_BASE_URL": "http://127.0.0.1:3101",
         "MAIL_API_MCP_ACCOUNTS_FILE": "/etc/tuta-mail-api/mcp-accounts.json"
       }
     }
@@ -576,7 +703,7 @@ The host must be able to read the entrypoint and reach the REST API at
 }
 ```
 
-- **Local host on `baggy`** (Claude Code on the box): loopback `http://127.0.0.1:3100`
+- **Local host on `baggy`** (Claude Code on the box): loopback `http://127.0.0.1:3101`
   works and the host reads the file directly.
 - **Remote host** (Claude Desktop / Cursor on your laptop): either run the MCP
   server on `baggy` and reach it over SSH, or expose the REST API to the laptop
@@ -591,7 +718,7 @@ ssh baggy '
   cd ~/src/tutanota
   printf %s \
    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"smoke\",\"version\":\"0\"}}}\n" \
-  | MAIL_API_BASE_URL=http://127.0.0.1:3100 MAIL_API_MCP_ACCOUNTS_FILE=/etc/tuta-mail-api/mcp-accounts.json \
+  | MAIL_API_BASE_URL=http://127.0.0.1:3101 MAIL_API_MCP_ACCOUNTS_FILE=/etc/tuta-mail-api/mcp-accounts.json \
     node packages/tuta-mail-mcp/dist/index.js
 ' 2>&1 | head
 # expect a JSON-RPC initialize result naming server "tuta-mail-mcp"; the process then waits on stdin.
@@ -602,7 +729,7 @@ ssh baggy '
 - [ ] `/` partition is at 77 %. Confirm `/var/lib/tuta-mail-api` lands on the
       same partition; if so, prefer `/home/tuta/...` paths instead. Run
       `df -h /var/lib` to verify.
-- [ ] Firewall state — `sudo ufw status verbose` to confirm 3100 and 4711
+- [ ] Firewall state — `sudo ufw status verbose` to confirm 3101 and 4711
       aren't accidentally exposed.
 - [ ] Tuta service-account credentials provisioned (separate from any personal
       account).
