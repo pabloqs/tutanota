@@ -22,11 +22,18 @@ host. MCP is installed for the local Cursor host.
 
 > ⚠ **The API actually listens on `0.0.0.0:3101`, not the `127.0.0.1:3100` the
 > deploy plan below prescribes.** `/etc/tuta-mail-api/env` on the box has
-> `MAIL_API_HOST=0.0.0.0` and `MAIL_API_PORT=3101`. Binding all interfaces means
-> the "loopback-only, skip TLS" assumption no longer holds on its own — the
-> mail API is reachable from the LAN unless `ufw` blocks 3101. Verify the
-> firewall (`sudo ufw status verbose`), or set `MAIL_API_HOST=127.0.0.1` to
-> restore loopback-only. All commands in this doc use `3101`.
+> `MAIL_API_HOST=0.0.0.0` and `MAIL_API_PORT=3101`, so the "loopback-only,
+> skip TLS" assumption no longer holds on its own. Exposure is instead gated by
+> `ufw` (verified 2026-09-07): active, default-deny inbound, with an explicit
+> `3101/tcp ALLOW IN 192.168.0.0/24` ("tuta-mail-api LAN") rule. So the API is
+> reachable from any host on the local LAN — where the bearer token is the only
+> access control — but **not** from the internet (3101 is not in any `Anywhere`
+> rule) nor from Tailscale peers (no `3101` rule for `100.x`, and the box's
+> `0.0.0.0` bind still needs a matching ufw allow). LAN reach is intentional; if
+> you don't need it, set `MAIL_API_HOST=127.0.0.1` and drop the ufw rule to
+> restore loopback-only, or narrow the rule to the specific hosts that call the
+> API. Re-check with `sudo ufw status verbose`. All commands in this doc use
+> `3101`.
 
 | Aspect | Value |
 |---|---|
