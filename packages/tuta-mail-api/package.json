@@ -1,6 +1,6 @@
 {
 	"name": "@tutao/tuta-mail-api",
-	"version": "341.260409.1",
+	"version": "359.260904.0",
 	"license": "GPL-3.0",
 	"main": "./dist/index.js",
 	"repository": {
@@ -29,8 +29,8 @@
 		"typescript": "5.8.3",
 		"tsx": "^4.20.6",
 		"@types/express": "5.0.3",
-		"@tutao/otest": "341.260409.1",
-		"@tutao/tutanota-utils": "341.260409.1"
+		"@tutao/otest": "359.260904.0",
+		"@tutao/tutanota-utils": "359.260904.0"
 	},
 	"engines": {
 		"node": ">= 20"

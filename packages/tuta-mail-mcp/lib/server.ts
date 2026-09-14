@@ -5,7 +5,7 @@ import { RestClient } from "./restClient.js"
 import { registerTools } from "./tools.js"
 
 export const SERVER_NAME = "tuta-mail-mcp"
-export const SERVER_VERSION = "341.260409.1"
+export const SERVER_VERSION = "359.260904.0"
 
 /** Build a configured MCP server (transport not yet connected). */
 export function createMcpServer(config: McpConfig): McpServer {

@@ -31,3 +31,6 @@ tuta-sdk/rust/out
 tuta-sdk/android
 import-trace.json
 .env.mail-api
+# local deploy secrets / staging (never commit)
+.deploy-secrets
+.deploy-tmp-api/
