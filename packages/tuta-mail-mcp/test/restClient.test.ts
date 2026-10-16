@@ -106,6 +106,24 @@ test("downloadAttachment: returns bytes, filename from Content-Disposition, cont
 	)
 })
 
+test("downloadAttachment: prefers RFC 5987 filename* over the ASCII fallback", async () => {
+	const original = "(borrador) Síntesis — Sección.docx"
+	const encoded = encodeURIComponent(original).replace(/['()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`)
+	await withClient(
+		() => ({
+			buffer: Buffer.from("docx"),
+			headers: {
+				"Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+				"Content-Disposition": `attachment; filename="borrador Sintesis _ Seccion.docx"; filename*=UTF-8''${encoded}`,
+			},
+		}),
+		async (client) => {
+			const att = await client.downloadAttachment("t", "m1", "a1")
+			assert.equal(att.filename, original)
+		},
+	)
+})
+
 test("downloadAttachment: falls back to attachmentId when no Content-Disposition", async () => {
 	await withClient(
 		() => ({ buffer: Buffer.from("x"), headers: { "Content-Type": "application/pdf" } }),

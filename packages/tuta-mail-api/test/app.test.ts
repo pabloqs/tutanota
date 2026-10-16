@@ -274,6 +274,34 @@ test("attachment download succeeds and returns binary response", async () => {
 	})
 })
 
+test("attachment download accepts a non-ASCII filename", async () => {
+	const store = new TokenStore()
+	const { rawToken, record } = generateToken(["mail:read:messages"], "test", 60_000)
+	store.add(record)
+	const unicodeService: MailService = {
+		...new DevMailService(),
+		async downloadAttachment() {
+			return {
+				data: Buffer.from("docx"),
+				filename: "(borrador) Síntesis — Sección.docx",
+				contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			}
+		},
+	}
+	const app = createApp(unicodeService, store, cfg)
+	const server = await startServer(app)
+	const address = server.address() as AddressInfo
+	const response = await fetch(`http://127.0.0.1:${address.port}/v1/messages/msg-1/attachments/att-1`, {
+		headers: { Authorization: `Bearer ${rawToken}` },
+	})
+	assert.equal(response.status, 200)
+	const disposition = response.headers.get("content-disposition") ?? ""
+	assert.match(disposition, /filename\*=UTF-8''/)
+	assert.doesNotMatch(disposition, /[^\x20-\x7E]/)
+	assert.equal(Buffer.from(await response.arrayBuffer()).toString("utf8"), "docx")
+	await new Promise<void>((resolve) => server.close(() => resolve()))
+})
+
 test("attachment download enforces max size", async () => {
 	const store = new TokenStore()
 	const { rawToken, record } = generateToken(["mail:read:messages"], "test", 60_000)

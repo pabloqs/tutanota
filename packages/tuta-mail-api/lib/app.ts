@@ -10,6 +10,7 @@ import type { MailService } from "./services/mailService.js"
 import type { MailServiceRegistry } from "./services/factory.js"
 import type { ITokenStore } from "./auth/tokenStore.js"
 import { parseListMessagesQuery, validateMoveMessageRequest, validateSendMessageRequest, validateUpdateMessageRequest, ValidationError } from "./validation.js"
+import { attachmentContentDisposition } from "./contentDisposition.js"
 import { ApiServiceError } from "./errors.js"
 import { MemoryIdempotencyStore, type ResponseCache } from "./idempotency/idempotencyStore.js"
 import type { MoveMessageResponse, SendMessageResponse } from "./dto/types.js"
@@ -90,7 +91,7 @@ export function createApp(mail: MailService | MailServiceRegistry, tokenStore: I
 			return sendError(res, "validation_error", "Attachment exceeds max allowed size", req.requestId, 413)
 		}
 		res.setHeader("Content-Type", attachment.contentType || "application/octet-stream")
-		res.setHeader("Content-Disposition", `attachment; filename="${attachment.filename}"`)
+		res.setHeader("Content-Disposition", attachmentContentDisposition(attachment.filename))
 		res.setHeader("Content-Length", attachment.data.byteLength)
 		res.status(200).send(attachment.data)
 	})

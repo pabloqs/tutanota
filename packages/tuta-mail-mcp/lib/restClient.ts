@@ -32,7 +32,15 @@ interface ErrorEnvelope {
 
 function parseFilename(contentDisposition: string | null, fallback: string): string {
 	if (!contentDisposition) return fallback
-	const match = /filename="?([^"]+)"?/.exec(contentDisposition)
+	const star = /filename\*=(?:UTF-8|utf-8)''([^;\s]+)/.exec(contentDisposition)
+	if (star?.[1]) {
+		try {
+			return decodeURIComponent(star[1])
+		} catch {
+			// Malformed percent-encoding: use the ASCII filename parameter.
+		}
+	}
+	const match = /filename="([^"]+)"/.exec(contentDisposition) ?? /filename=([^;\s]+)/.exec(contentDisposition)
 	return match?.[1] ?? fallback
 }
 
