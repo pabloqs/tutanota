@@ -19,6 +19,6 @@ export function createMcpServer(config: McpConfig): McpServer {
 	)
 	const client = new RestClient(config.baseUrl, config.timeoutMs)
 	const resolver = new AccountResolver(config.accounts)
-	registerTools(server, { client, resolver })
+	registerTools(server, { client, resolver, attachmentDir: config.attachmentDir })
 	return server
 }

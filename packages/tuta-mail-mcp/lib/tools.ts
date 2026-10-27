@@ -1,10 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises"
-import { homedir } from "node:os"
-import { join } from "node:path"
 import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { AccountResolver, McpUserError } from "./accounts.js"
+import { saveAttachment } from "./attachmentStore.js"
 import { resolveFolderRef } from "./folderResolve.js"
 import { RestClient, RestError } from "./restClient.js"
 import type { HealthAccount, SendMessageRequest } from "./restTypes.js"
@@ -12,6 +10,8 @@ import type { HealthAccount, SendMessageRequest } from "./restTypes.js"
 export interface ToolDeps {
 	client: RestClient
 	resolver: AccountResolver
+	/** Absolute directory where download_attachment saves files. */
+	attachmentDir: string
 }
 
 const emailAddressSchema = z.object({
@@ -47,7 +47,7 @@ async function guard(run: () => Promise<CallToolResult>): Promise<CallToolResult
 
 /** Register every mail tool on the server. All account-scoped tools accept an `account` argument. */
 export function registerTools(server: McpServer, deps: ToolDeps): void {
-	const { client, resolver } = deps
+	const { client, resolver, attachmentDir } = deps
 
 	server.registerTool(
 		"list_accounts",
@@ -159,11 +159,13 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
 				const account = resolver.resolve(args.account)
 				const att = await client.downloadAttachment(account.token, args.messageId, args.attachmentId)
 				// Always to disk: inline base64 has to be re-emitted by the model to be used, and that copy gets corrupted.
-				const dir = process.env.MAIL_API_ATTACHMENT_DIR || join(homedir(), ".local", "share", "tuta-mail", "attachments")
-				await mkdir(dir, { recursive: true })
-				const safeName = att.filename.replace(/[^\w.\- ()[\]]+/g, "_").slice(0, 180) || "attachment"
-				const savedPath = join(dir, `${Date.now()}-${safeName}`)
-				await writeFile(savedPath, att.data)
+				const savedPath = await saveAttachment(
+					attachmentDir,
+					{ accountId: account.id, messageId: args.messageId, attachmentId: args.attachmentId },
+					att.filename,
+					att.contentType,
+					att.data,
+				)
 				return jsonResult({
 					account: account.id,
 					filename: att.filename,

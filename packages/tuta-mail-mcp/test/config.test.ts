@@ -1,8 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { mkdtempSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { homedir, tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import { loadConfig } from "../lib/config.js"
 
 test("loadConfig: single-account fallback from MAIL_API_TOKEN", () => {
@@ -22,6 +22,12 @@ test("loadConfig: base URL trailing slash trimmed; custom timeout parsed", () =>
 	const cfg = loadConfig({ MAIL_API_TOKEN: "tok", MAIL_API_BASE_URL: "http://host:9/", MAIL_API_TIMEOUT_MS: "1234" })
 	assert.equal(cfg.baseUrl, "http://host:9")
 	assert.equal(cfg.timeoutMs, 1234)
+})
+
+test("loadConfig: attachment dir defaults under the home dir and is always absolute", () => {
+	assert.equal(loadConfig({ MAIL_API_TOKEN: "tok" }).attachmentDir, join(homedir(), ".local", "share", "tuta-mail", "attachments"))
+	assert.equal(loadConfig({ MAIL_API_TOKEN: "tok", MAIL_API_ATTACHMENT_DIR: "rel/att" }).attachmentDir, resolve("rel/att"))
+	assert.equal(loadConfig({ MAIL_API_TOKEN: "tok", MAIL_API_ATTACHMENT_DIR: "/srv/att" }).attachmentDir, "/srv/att")
 })
 
 test("loadConfig: invalid timeout falls back to default", () => {

@@ -28,6 +28,7 @@ configured, `account` may be omitted.
 | `MAIL_API_MCP_ACCOUNTS` | one of these | Inline JSON: array of `{ id, token, label? }` (or `{ "accounts": [...] }`). |
 | `MAIL_API_MCP_ACCOUNTS_FILE` | one of these | Path to a JSON file with the same shape. |
 | `MAIL_API_TOKEN` | fallback | Single-account shortcut; pairs with optional `MAIL_API_ACCOUNT_ID` (default `default`). |
+| `MAIL_API_ATTACHMENT_DIR` | no | Where `download_attachment` saves files (default `~/.local/share/tuta-mail/attachments`; resolved to an absolute path). Created `0700`, files `0600`. Nothing is deleted automatically: clean it up by hand. |
 
 Account `id`s must be slugs (`^[a-z0-9][a-z0-9_-]*$`) matching the ids configured
 in `tuta-mail-api`. Tokens are the per-account bearer tokens minted there; they are
@@ -52,7 +53,7 @@ Example `accounts.json`:
 | `list_folders` | List folders for an account. |
 | `list_messages` | List message summaries with pagination + filters (unread, sender, date range, attachments). |
 | `get_message` | Full message: headers, recipients, body, attachment metadata. |
-| `download_attachment` | Saves the attachment to disk; returns `savedPath` + filename + content type + size. Directory: `MAIL_API_ATTACHMENT_DIR`, default `~/.local/share/tuta-mail/attachments`. |
+| `download_attachment` | Saves the attachment under `MAIL_API_ATTACHMENT_DIR`; returns absolute `savedPath` + filename + content type + size. Re-downloading the same attachment reuses its file. |
 | `mark_message` | Set unread flag (IMAP `\Seen`). |
 | `delete_message` | Move to trash (IMAP `\Deleted`). |
 | `send_message` | Send mail; `externalPassword` for secure external send; `idempotencyKey` for safe retries. |

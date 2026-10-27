@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join, resolve } from "node:path"
 
 /** One account the MCP server can act on, with the bearer token bound to it in the REST API. */
 export interface McpAccount {
@@ -17,6 +19,8 @@ export interface McpConfig {
 	timeoutMs: number
 	/** Accounts this server manages (at least one). */
 	accounts: McpAccount[]
+	/** Absolute directory where `download_attachment` saves files. */
+	attachmentDir: string
 }
 
 /** Slug rule shared with `tuta-mail-api` account ids. */
@@ -109,5 +113,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): McpConfig {
 		baseUrl: baseUrlRaw.replace(/\/$/, ""),
 		timeoutMs: Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 60000,
 		accounts: loadAccounts(env),
+		// Absolute so savedPath is usable from the agent's shell, whatever the server's cwd.
+		attachmentDir: resolve(env.MAIL_API_ATTACHMENT_DIR?.trim() || join(homedir(), ".local", "share", "tuta-mail", "attachments")),
 	}
 }
