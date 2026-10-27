@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { mkdir, rename, unlink, writeFile } from "node:fs/promises"
+import { chmod, mkdir, rename, unlink, writeFile } from "node:fs/promises"
 import { extname, join } from "node:path"
 
 /** Extensions for content types the agent typically converts, used when the filename has none. */
@@ -30,18 +30,25 @@ export interface AttachmentRef {
 	attachmentId: string
 }
 
+/** Extension from our map only. A hostile Content-Type must not read Object.prototype. */
+function extensionForContentType(contentType: string): string {
+	const key = contentType.split(";")[0].trim().toLowerCase()
+	return Object.hasOwn(EXTENSION_BY_CONTENT_TYPE, key) ? EXTENSION_BY_CONTENT_TYPE[key] : ""
+}
+
 /**
  * File name for a saved attachment: a key derived from account/message/attachment ids (so repeated
- * downloads reuse one file and different attachments never collide) plus a path-safe version of the
- * original name. The result never contains a path separator.
+ * downloads reuse one file and different attachments never collide) plus a shell-safe version of the
+ * original name. Only ASCII letters, digits, `.`, `_` and `-`, so the path is one shell word and
+ * cannot contain a separator.
  */
 export function attachmentFileName(ref: AttachmentRef, filename: string, contentType: string): string {
 	const key = createHash("sha256").update(`${ref.accountId}\0${ref.messageId}\0${ref.attachmentId}`).digest("hex").slice(0, 16)
-	const sanitized = filename.replace(/[^\w.\- ()[\]]+/g, "_")
+	const sanitized = filename.trim().replace(/[^A-Za-z0-9._-]+/g, "_")
 	// Converters pick the format from the extension, so keep it when truncating and derive one when missing.
 	let ext = extname(sanitized).slice(0, 16)
 	const base = (ext ? sanitized.slice(0, -extname(sanitized).length) : sanitized) || "attachment"
-	if (!ext) ext = EXTENSION_BY_CONTENT_TYPE[contentType.split(";")[0].trim().toLowerCase()] ?? ""
+	if (!ext) ext = extensionForContentType(contentType)
 	return `${key}-${base.slice(0, 180 - ext.length)}${ext}`
 }
 
@@ -51,6 +58,8 @@ export function attachmentFileName(ref: AttachmentRef, filename: string, content
  */
 export async function saveAttachment(dir: string, ref: AttachmentRef, filename: string, contentType: string, data: Buffer): Promise<string> {
 	await mkdir(dir, { recursive: true, mode: 0o700 })
+	// mkdir does not change the mode of a directory that already exists.
+	await chmod(dir, 0o700)
 	const savedPath = join(dir, attachmentFileName(ref, filename, contentType))
 	const tmpPath = `${savedPath}.${randomUUID()}.tmp`
 	try {

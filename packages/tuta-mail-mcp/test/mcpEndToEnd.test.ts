@@ -267,7 +267,13 @@ test("unknown account is a tool error listing valid ids", async () => {
 test("REST auth failure surfaces as a tool error, not a crash", async () => {
 	// Configure the MCP with a token the fake REST rejects.
 	const rest = await startFakeRest(accountAwareHandler)
-	const server = createMcpServer({ baseUrl: rest.baseUrl, timeoutMs: 60000, accounts: [{ id: "solo", label: null, token: "wrong-token" }] })
+	const attachmentDir = join(await mkdtemp(join(tmpdir(), "tuta-mail-att-")), "attachments")
+	const server = createMcpServer({
+		baseUrl: rest.baseUrl,
+		timeoutMs: 60000,
+		accounts: [{ id: "solo", label: null, token: "wrong-token" }],
+		attachmentDir,
+	})
 	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
 	await server.connect(serverTransport)
 	const client = new Client({ name: "t", version: "1.0.0" })
@@ -281,5 +287,6 @@ test("REST auth failure surfaces as a tool error, not a crash", async () => {
 		await client.close()
 		await server.close()
 		await rest.close()
+		await rm(dirname(attachmentDir), { recursive: true, force: true })
 	}
 })

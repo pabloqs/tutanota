@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { attachmentFileName, saveAttachment } from "../lib/attachmentStore.js"
@@ -10,8 +10,19 @@ const REF = { accountId: "work", messageId: "m1", attachmentId: "a1" }
 /** Strip the 16-hex id key and its dash. */
 const nameOf = (fileName: string) => fileName.slice(17)
 
-test("attachmentFileName: non-ASCII characters become underscores", () => {
-	assert.equal(nameOf(attachmentFileName(REF, "Mandat secrétariat UT.docx", "application/octet-stream")), "Mandat secr_tariat UT.docx")
+test("attachmentFileName: disallowed characters become underscores, and the result is one shell word", () => {
+	assert.equal(nameOf(attachmentFileName(REF, "Mandat secrétariat UT.docx", "application/octet-stream")), "Mandat_secr_tariat_UT.docx")
+	assert.equal(nameOf(attachmentFileName(REF, "Informe (final).pdf", "application/pdf")), "Informe_final_.pdf")
+	assert.equal(nameOf(attachmentFileName(REF, "foo.docx ", "application/octet-stream")), "foo.docx")
+	for (const filename of ["Mandat secrétariat UT.docx", "Informe (final).pdf", "a[b].txt"]) {
+		assert.match(attachmentFileName(REF, filename, "application/octet-stream"), /^[0-9a-f]{16}-[A-Za-z0-9._-]+$/)
+	}
+})
+
+test("attachmentFileName: a hostile content type cannot leak Object.prototype into the name", () => {
+	for (const contentType of ["__proto__", "constructor", "toString"]) {
+		assert.equal(nameOf(attachmentFileName(REF, "blob", contentType)), "blob")
+	}
 })
 
 test("attachmentFileName: path separators and traversal cannot escape the directory", () => {
@@ -56,6 +67,19 @@ test("saveAttachment: writes owner-only file and directory, leaves no temp files
 		assert.equal((await stat(savedPath)).mode & 0o777, 0o600)
 		assert.equal((await stat(dir)).mode & 0o777, 0o700)
 		assert.deepEqual(await readdir(dir), [attachmentFileName(REF, "a.txt", "text/plain")])
+	} finally {
+		await rm(root, { recursive: true, force: true })
+	}
+})
+
+test("saveAttachment: tightens an existing directory to owner-only", async () => {
+	const root = await mkdtemp(join(tmpdir(), "tuta-mail-att-"))
+	try {
+		const dir = join(root, "attachments")
+		await mkdir(dir)
+		await chmod(dir, 0o755)
+		await saveAttachment(dir, REF, "a.txt", "text/plain", Buffer.from("hello"))
+		assert.equal((await stat(dir)).mode & 0o777, 0o700)
 	} finally {
 		await rm(root, { recursive: true, force: true })
 	}

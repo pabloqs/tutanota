@@ -28,7 +28,7 @@ configured, `account` may be omitted.
 | `MAIL_API_MCP_ACCOUNTS` | one of these | Inline JSON: array of `{ id, token, label? }` (or `{ "accounts": [...] }`). |
 | `MAIL_API_MCP_ACCOUNTS_FILE` | one of these | Path to a JSON file with the same shape. |
 | `MAIL_API_TOKEN` | fallback | Single-account shortcut; pairs with optional `MAIL_API_ACCOUNT_ID` (default `default`). |
-| `MAIL_API_ATTACHMENT_DIR` | no | Where `download_attachment` saves files (default `~/.local/share/tuta-mail/attachments`; resolved to an absolute path). Created `0700`, files `0600`. Nothing is deleted automatically: clean it up by hand. |
+| `MAIL_API_ATTACHMENT_DIR` | no | Where `download_attachment` saves files (default `~/.local/share/tuta-mail/attachments`). `~/` is expanded; any other value is resolved to an absolute path. The directory is set to `0700` (including when it already existed), files `0600`. Nothing is deleted automatically: clean it up by hand. |
 
 Account `id`s must be slugs (`^[a-z0-9][a-z0-9_-]*$`) matching the ids configured
 in `tuta-mail-api`. Tokens are the per-account bearer tokens minted there; they are

@@ -28,6 +28,8 @@ test("loadConfig: attachment dir defaults under the home dir and is always absol
 	assert.equal(loadConfig({ MAIL_API_TOKEN: "tok" }).attachmentDir, join(homedir(), ".local", "share", "tuta-mail", "attachments"))
 	assert.equal(loadConfig({ MAIL_API_TOKEN: "tok", MAIL_API_ATTACHMENT_DIR: "rel/att" }).attachmentDir, resolve("rel/att"))
 	assert.equal(loadConfig({ MAIL_API_TOKEN: "tok", MAIL_API_ATTACHMENT_DIR: "/srv/att" }).attachmentDir, "/srv/att")
+	assert.equal(loadConfig({ MAIL_API_TOKEN: "tok", MAIL_API_ATTACHMENT_DIR: "~/mail-att" }).attachmentDir, join(homedir(), "mail-att"))
+	assert.equal(loadConfig({ MAIL_API_TOKEN: "tok", MAIL_API_ATTACHMENT_DIR: "~other/mail-att" }).attachmentDir, resolve("~other/mail-att"))
 })
 
 test("loadConfig: invalid timeout falls back to default", () => {

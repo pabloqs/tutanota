@@ -106,6 +106,15 @@ function loadAccounts(env: NodeJS.ProcessEnv): McpAccount[] {
 	return accounts
 }
 
+/** `~/...` is home-relative. `~user` is left literal. Empty uses the default under the home dir. */
+function resolveAttachmentDir(raw: string | undefined): string {
+	const value = raw?.trim() ?? ""
+	if (!value) return join(homedir(), ".local", "share", "tuta-mail", "attachments")
+	if (value === "~") return homedir()
+	if (value.startsWith("~/")) return join(homedir(), value.slice(2))
+	return resolve(value)
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): McpConfig {
 	const baseUrlRaw = env.MAIL_API_BASE_URL?.trim() || "http://127.0.0.1:3100"
 	const timeoutRaw = Number.parseInt(env.MAIL_API_TIMEOUT_MS ?? "60000", 10)
@@ -114,6 +123,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): McpConfig {
 		timeoutMs: Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 60000,
 		accounts: loadAccounts(env),
 		// Absolute so savedPath is usable from the agent's shell, whatever the server's cwd.
-		attachmentDir: resolve(env.MAIL_API_ATTACHMENT_DIR?.trim() || join(homedir(), ".local", "share", "tuta-mail", "attachments")),
+		attachmentDir: resolveAttachmentDir(env.MAIL_API_ATTACHMENT_DIR),
 	}
 }
