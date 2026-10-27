@@ -1,3 +1,6 @@
+import { mkdir, writeFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
@@ -143,7 +146,8 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
 		"download_attachment",
 		{
 			title: "Download attachment",
-			description: "Download an attachment's bytes (returned base64-encoded) along with its filename and content type.",
+			description:
+				"Download an attachment to disk. The result contains savedPath (the file on disk) plus filename, content type and size; the bytes are never returned inline.",
 			inputSchema: {
 				...accountArg,
 				messageId: z.string().describe("Message id owning the attachment."),
@@ -154,12 +158,18 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
 			guard(async () => {
 				const account = resolver.resolve(args.account)
 				const att = await client.downloadAttachment(account.token, args.messageId, args.attachmentId)
+				// Always to disk: inline base64 has to be re-emitted by the model to be used, and that copy gets corrupted.
+				const dir = process.env.MAIL_API_ATTACHMENT_DIR || join(homedir(), ".local", "share", "tuta-mail", "attachments")
+				await mkdir(dir, { recursive: true })
+				const safeName = att.filename.replace(/[^\w.\- ()[\]]+/g, "_").slice(0, 180) || "attachment"
+				const savedPath = join(dir, `${Date.now()}-${safeName}`)
+				await writeFile(savedPath, att.data)
 				return jsonResult({
 					account: account.id,
 					filename: att.filename,
 					contentType: att.contentType,
 					sizeBytes: att.data.byteLength,
-					contentBase64: att.data.toString("base64"),
+					savedPath,
 				})
 			}),
 	)

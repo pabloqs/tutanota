@@ -52,7 +52,7 @@ Example `accounts.json`:
 | `list_folders` | List folders for an account. |
 | `list_messages` | List message summaries with pagination + filters (unread, sender, date range, attachments). |
 | `get_message` | Full message: headers, recipients, body, attachment metadata. |
-| `download_attachment` | Attachment bytes (base64) + filename + content type. |
+| `download_attachment` | Saves the attachment to disk; returns `savedPath` + filename + content type + size. Directory: `MAIL_API_ATTACHMENT_DIR`, default `~/.local/share/tuta-mail/attachments`. |
 | `mark_message` | Set unread flag (IMAP `\Seen`). |
 | `delete_message` | Move to trash (IMAP `\Deleted`). |
 | `send_message` | Send mail; `externalPassword` for secure external send; `idempotencyKey` for safe retries. |

@@ -1,5 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { dirname, join } from "node:path"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
@@ -174,18 +177,29 @@ test("get_message returns the full message for the account", async () => {
 	})
 })
 
-test("download_attachment returns base64 bytes and metadata", async () => {
-	await withMcp(async (client) => {
-		const res = (await client.callTool({
-			name: "download_attachment",
-			arguments: { account: "personal", messageId: "m1", attachmentId: "a1" },
-		})) as CallToolResult
-		const body = JSON.parse(textOf(res)) as { filename: string; contentType: string; sizeBytes: number; contentBase64: string }
-		assert.equal(body.filename, "personal.txt")
-		assert.equal(body.contentType, "text/plain")
-		assert.equal(Buffer.from(body.contentBase64, "base64").toString("utf8"), "bytes-personal")
-		assert.equal(body.sizeBytes, "bytes-personal".length)
-	})
+test("download_attachment saves bytes to disk and returns savedPath and metadata", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "tuta-mail-att-"))
+	const prevDir = process.env.MAIL_API_ATTACHMENT_DIR
+	process.env.MAIL_API_ATTACHMENT_DIR = dir
+	try {
+		await withMcp(async (client) => {
+			const res = (await client.callTool({
+				name: "download_attachment",
+				arguments: { account: "personal", messageId: "m1", attachmentId: "a1" },
+			})) as CallToolResult
+			const body = JSON.parse(textOf(res)) as Record<string, unknown>
+			assert.equal(body.filename, "personal.txt")
+			assert.equal(body.contentType, "text/plain")
+			assert.equal(body.sizeBytes, "bytes-personal".length)
+			assert.equal(body.contentBase64, undefined)
+			assert.equal(dirname(body.savedPath as string), dir)
+			assert.equal(await readFile(body.savedPath as string, "utf8"), "bytes-personal")
+		})
+	} finally {
+		if (prevDir === undefined) delete process.env.MAIL_API_ATTACHMENT_DIR
+		else process.env.MAIL_API_ATTACHMENT_DIR = prevDir
+		await rm(dir, { recursive: true, force: true })
+	}
 })
 
 test("mark_message sets unread flag", async () => {
