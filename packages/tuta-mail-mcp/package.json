@@ -14,7 +14,7 @@
 	"scripts": {
 		"build": "tsc -b",
 		"start": "node dist/index.js",
-		"test": "node --import tsx --test \"test/**/*.test.ts\""
+		"test": "tsc -p tsconfig.test.json && node --import tsx --test \"test/**/*.test.ts\""
 	},
 	"type": "module",
 	"files": [

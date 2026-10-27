@@ -2,7 +2,7 @@ import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { AccountResolver, McpUserError } from "./accounts.js"
-import { saveAttachment } from "./attachmentStore.js"
+import type { AttachmentStore } from "./attachmentStore.js"
 import { resolveFolderRef } from "./folderResolve.js"
 import { RestClient, RestError } from "./restClient.js"
 import type { HealthAccount, SendMessageRequest } from "./restTypes.js"
@@ -10,8 +10,8 @@ import type { HealthAccount, SendMessageRequest } from "./restTypes.js"
 export interface ToolDeps {
 	client: RestClient
 	resolver: AccountResolver
-	/** Absolute directory where download_attachment saves files. */
-	attachmentDir: string
+	/** Where download_attachment saves files. */
+	attachments: AttachmentStore
 }
 
 const emailAddressSchema = z.object({
@@ -47,7 +47,7 @@ async function guard(run: () => Promise<CallToolResult>): Promise<CallToolResult
 
 /** Register every mail tool on the server. All account-scoped tools accept an `account` argument. */
 export function registerTools(server: McpServer, deps: ToolDeps): void {
-	const { client, resolver, attachmentDir } = deps
+	const { client, resolver, attachments } = deps
 
 	server.registerTool(
 		"list_accounts",
@@ -147,7 +147,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
 		{
 			title: "Download attachment",
 			description:
-				"Download an attachment to disk. The result contains savedPath (the file on disk) plus filename, content type and size; the bytes are never returned inline.",
+				"Download an attachment to disk. The result contains savedPath (the file on disk) plus filename, content type and size; the bytes are never returned inline. Quote savedPath in shell commands: its directory part may contain spaces.",
 			inputSchema: {
 				...accountArg,
 				messageId: z.string().describe("Message id owning the attachment."),
@@ -159,8 +159,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
 				const account = resolver.resolve(args.account)
 				const att = await client.downloadAttachment(account.token, args.messageId, args.attachmentId)
 				// Always to disk: inline base64 has to be re-emitted by the model to be used, and that copy gets corrupted.
-				const savedPath = await saveAttachment(
-					attachmentDir,
+				const savedPath = await attachments.save(
 					{ accountId: account.id, messageId: args.messageId, attachmentId: args.attachmentId },
 					att.filename,
 					att.contentType,

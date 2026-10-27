@@ -106,13 +106,20 @@ function loadAccounts(env: NodeJS.ProcessEnv): McpAccount[] {
 	return accounts
 }
 
+export function defaultAttachmentDir(): string {
+	return join(homedir(), ".local", "share", "tuta-mail", "attachments")
+}
+
 /** `~/...` is home-relative. `~user` is left literal. Empty uses the default under the home dir. */
 function resolveAttachmentDir(raw: string | undefined): string {
 	const value = raw?.trim() ?? ""
-	if (!value) return join(homedir(), ".local", "share", "tuta-mail", "attachments")
-	if (value === "~") return homedir()
-	if (value.startsWith("~/")) return join(homedir(), value.slice(2))
-	return resolve(value)
+	if (!value) return defaultAttachmentDir()
+	const dir = value.startsWith("~/") ? join(homedir(), value.slice(2)) : resolve(value === "~" ? homedir() : value)
+	// Attachments get their own directory: never dump them into, or change the mode of, home or root.
+	if (dir === homedir() || dir === resolve("/")) {
+		throw new Error(`[tuta-mail-mcp] MAIL_API_ATTACHMENT_DIR must be a dedicated directory, not '${dir}'`)
+	}
+	return dir
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): McpConfig {

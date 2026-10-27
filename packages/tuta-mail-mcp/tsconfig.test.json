@@ -1,0 +1,9 @@
+{
+	"extends": "../../tsconfig_common.json",
+	"include": ["lib", "test", "../../types/"],
+	"compilerOptions": {
+		"noEmit": true,
+		"declaration": false,
+		"incremental": false
+	}
+}

@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import type { McpConfig } from "./config.js"
+import { defaultAttachmentDir, type McpConfig } from "./config.js"
 import { AccountResolver } from "./accounts.js"
+import { AttachmentStore } from "./attachmentStore.js"
 import { RestClient } from "./restClient.js"
 import { registerTools } from "./tools.js"
 
@@ -19,6 +20,7 @@ export function createMcpServer(config: McpConfig): McpServer {
 	)
 	const client = new RestClient(config.baseUrl, config.timeoutMs)
 	const resolver = new AccountResolver(config.accounts)
-	registerTools(server, { client, resolver, attachmentDir: config.attachmentDir })
+	const attachments = new AttachmentStore(config.attachmentDir, config.attachmentDir === defaultAttachmentDir())
+	registerTools(server, { client, resolver, attachments })
 	return server
 }

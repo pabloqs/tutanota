@@ -1,9 +1,9 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { attachmentFileName, saveAttachment } from "../lib/attachmentStore.js"
+import { AttachmentStore, attachmentFileName } from "../lib/attachmentStore.js"
 
 const REF = { accountId: "work", messageId: "m1", attachmentId: "a1" }
 
@@ -58,41 +58,61 @@ test("attachmentFileName: same attachment maps to one name, different attachment
 	assert.equal(names.size, 4)
 })
 
-test("saveAttachment: writes owner-only file and directory, leaves no temp files", async () => {
+async function withTempRoot(run: (root: string) => Promise<void>): Promise<void> {
 	const root = await mkdtemp(join(tmpdir(), "tuta-mail-att-"))
 	try {
+		await run(root)
+	} finally {
+		await rm(root, { recursive: true, force: true })
+	}
+}
+
+test("AttachmentStore.save: writes owner-only file and directory, leaves no temp files", async () => {
+	await withTempRoot(async (root) => {
 		const dir = join(root, "attachments")
-		const savedPath = await saveAttachment(dir, REF, "a.txt", "text/plain", Buffer.from("hello"))
+		const savedPath = await new AttachmentStore(dir, false).save(REF, "a.txt", "text/plain", Buffer.from("hello"))
 		assert.equal(await readFile(savedPath, "utf8"), "hello")
 		assert.equal((await stat(savedPath)).mode & 0o777, 0o600)
 		assert.equal((await stat(dir)).mode & 0o777, 0o700)
 		assert.deepEqual(await readdir(dir), [attachmentFileName(REF, "a.txt", "text/plain")])
-	} finally {
-		await rm(root, { recursive: true, force: true })
-	}
+	})
 })
 
-test("saveAttachment: tightens an existing directory to owner-only", async () => {
-	const root = await mkdtemp(join(tmpdir(), "tuta-mail-att-"))
-	try {
-		const dir = join(root, "attachments")
-		await mkdir(dir)
-		await chmod(dir, 0o755)
-		await saveAttachment(dir, REF, "a.txt", "text/plain", Buffer.from("hello"))
-		assert.equal((await stat(dir)).mode & 0o777, 0o700)
-	} finally {
-		await rm(root, { recursive: true, force: true })
-	}
+test("AttachmentStore.save: tightens an existing directory only when it owns it", async () => {
+	await withTempRoot(async (root) => {
+		const owned = join(root, "owned")
+		const configured = join(root, "configured")
+		for (const dir of [owned, configured]) {
+			await mkdir(dir)
+			await chmod(dir, 0o755)
+		}
+		await new AttachmentStore(owned, true).save(REF, "a.txt", "text/plain", Buffer.from("hello"))
+		await new AttachmentStore(configured, false).save(REF, "a.txt", "text/plain", Buffer.from("hello"))
+		assert.equal((await stat(owned)).mode & 0o777, 0o700)
+		assert.equal((await stat(configured)).mode & 0o777, 0o755)
+	})
 })
 
-test("saveAttachment: a failed write leaves nothing behind", async () => {
-	const root = await mkdtemp(join(tmpdir(), "tuta-mail-att-"))
-	try {
+test("AttachmentStore.save: re-saving replaces copies stored under an older name", async () => {
+	await withTempRoot(async (root) => {
+		const store = new AttachmentStore(root, false)
+		const name = attachmentFileName(REF, "Informe (final).pdf", "application/pdf")
+		const prefix = name.slice(0, 17)
+		// A copy of the same attachment under an older sanitizer's name, one of another attachment, and an in-flight temp file.
+		await writeFile(join(root, `${prefix}Informe (final).pdf`), "old")
+		await writeFile(join(root, `${prefix}x.pdf.1234.tmp`), "tmp")
+		const other = attachmentFileName({ ...REF, attachmentId: "a2" }, "b.pdf", "application/pdf")
+		await writeFile(join(root, other), "other")
+		await store.save(REF, "Informe (final).pdf", "application/pdf", Buffer.from("new"))
+		assert.deepEqual((await readdir(root)).sort(), [name, `${prefix}x.pdf.1234.tmp`, other].sort())
+	})
+})
+
+test("AttachmentStore.save: a failed write leaves nothing behind", async () => {
+	await withTempRoot(async (root) => {
 		// A directory at the final path makes the rename fail after the temp file was written.
 		await mkdir(join(root, attachmentFileName(REF, "a.txt", "text/plain")))
-		await assert.rejects(saveAttachment(root, REF, "a.txt", "text/plain", Buffer.from("hello")))
+		await assert.rejects(new AttachmentStore(root, false).save(REF, "a.txt", "text/plain", Buffer.from("hello")))
 		assert.deepEqual(await readdir(root), [attachmentFileName(REF, "a.txt", "text/plain")])
-	} finally {
-		await rm(root, { recursive: true, force: true })
-	}
+	})
 })

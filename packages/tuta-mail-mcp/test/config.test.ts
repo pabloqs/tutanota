@@ -32,6 +32,12 @@ test("loadConfig: attachment dir defaults under the home dir and is always absol
 	assert.equal(loadConfig({ MAIL_API_TOKEN: "tok", MAIL_API_ATTACHMENT_DIR: "~other/mail-att" }).attachmentDir, resolve("~other/mail-att"))
 })
 
+test("loadConfig: attachment dir may not be the home directory or root", () => {
+	for (const value of ["~", "~/", homedir(), `${homedir()}/`, "/"]) {
+		assert.throws(() => loadConfig({ MAIL_API_TOKEN: "tok", MAIL_API_ATTACHMENT_DIR: value }), /dedicated directory/, value)
+	}
+})
+
 test("loadConfig: invalid timeout falls back to default", () => {
 	const cfg = loadConfig({ MAIL_API_TOKEN: "tok", MAIL_API_TIMEOUT_MS: "0" })
 	assert.equal(cfg.timeoutMs, 60000)
